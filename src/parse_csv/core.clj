@@ -2,6 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.data.csv :as csv]
             [clojure.walk :as walk]
+            [clojure.string :as string]
+            [clojure.walk :refer [postwalk]]
             [dk.ative.docjure.spreadsheet :as spreadsheet]))
 
 ;; [pdfboxing.text :as text]
@@ -50,6 +52,52 @@
   (into [] (remove (fn [z]
                      (= (count z) 0)) row)))
 
+(defn replace-ws-with-dash
+  [string]
+  (clojure.string/replace string #" +" "-"))
+
+(defn keywordize
+  [m]
+  (let [f (fn [[key val]]
+            (if (string? key)
+              [(keyword (replace-ws-with-dash key)) val]
+              [key val]))]
+    (postwalk (fn [x] (if (map? x) (into {} (map f x)) x))
+              m)))
+
+(defn map-keys
+  [f m]
+  (persistent!
+    (reduce-kv (fn [m key val] (assoc! m (f key) val))
+               (transient (empty m)) m)))
+
+(defn macro-parse-csv-to-if
+  [filename]
+  (->> filename
+      (read-csv ,,,)
+      (map remove-white-space ,,,)
+       (remove empty? ,,,)
+       (take 3 ,,,)
+       (into [] ,,,)
+       (get ,,, 1)))
+
+(defn row-to-map
+  [row]
+  (let [paired-row-1 (partition 2 row)
+        vectorized-pairs (map vec paired-row-1)
+        mapped-pairs (into {} vectorized-pairs)
+        keywordized-mapped-pairs (keywordize mapped-pairs)]
+    keywordized-mapped-pairs))
+
+(defn parse-csv-to-if
+  [filename]
+  (let [contents (read-csv filename)
+        ws-removed (map remove-white-space contents)
+        empty-removed (remove empty? ws-removed)
+        vectorized-f3 (into [] empty-removed)
+        vector-of-rows (mapv row-to-map vectorized-f3)]
+    vector-of-rows))
+
 ;;(def x (read-csv "example2.csv"))
 ;;(def y (nth x 1))
 ;;(reduce-csv-row y [1 2 8 9])
@@ -66,6 +114,8 @@
 ; (def j (into [] (take 3 (remove empty? (map remove-white-space x)))))
 ; (partition 2 (get j 1))
 ;=> (("NLC Address" "1234 Johnson Dr.") ("Invoice Date" "06/25/2019"))
+; (partition 2 (get j 2))
+;=> (("NLC Phone" "222-333-4444"))
 ; (def k (partition 2 (get j 1)))
 ; (into {} (map vec k))
 ; => {"NLC Address" "1234 Johnson Dr.", "Invoice Date" "06/25/2019"}
@@ -75,6 +125,10 @@
 ;=> "NLC-Address"
 ; (def h (into {} (map vec k)))
 ; (def g (into [] (map vec k)))
+; (keywordize h)
+;=> {:NLC-Address "1234 Johnson Dr.", :Invoice-Date "06/25/2019"}
+; (row-to-map (get j 1))
+;=> {:NLC-Address "1234 Johnson Dr.", :Invoice-Date "06/25/2019"}
 
 
 (defn find-headers [filename])
