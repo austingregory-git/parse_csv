@@ -47,20 +47,25 @@
     []
     col-nums))
 
+(defn in?
+  "true if coll contains elm"
+  [coll elm]
+  (some #(= elm %) coll))
+
 (defn remove-white-space
   [row]
   (into [] (remove (fn [z]
                      (= (count z) 0)) row)))
 
-(defn replace-ws-with-dash
+(defn replace-bad-with-dash
   [string]
-  (clojure.string/replace string #" +" "-"))
+  (clojure.string/replace (clojure.string/replace string #":" "") #"[/\ +]" "-"))
 
 (defn keywordize
   [m]
   (let [f (fn [[key val]]
             (if (string? key)
-              [(keyword (replace-ws-with-dash key)) val]
+              [(keyword (string/lower-case (replace-bad-with-dash key))) val]
               [key val]))]
     (postwalk (fn [x] (if (map? x) (into {} (map f x)) x))
               m)))
@@ -83,8 +88,8 @@
 
 (defn row-to-map
   [row]
-  (let [paired-row-1 (partition 2 row)
-        vectorized-pairs (map vec paired-row-1)
+  (let [paired-row (partition 2 row)
+        vectorized-pairs (map vec paired-row)
         mapped-pairs (into {} vectorized-pairs)
         keywordized-mapped-pairs (keywordize mapped-pairs)]
     keywordized-mapped-pairs))
@@ -94,9 +99,151 @@
   (let [contents (read-csv filename)
         ws-removed (map remove-white-space contents)
         empty-removed (remove empty? ws-removed)
-        vectorized-f3 (into [] empty-removed)
-        vector-of-rows (mapv row-to-map vectorized-f3)]
-    vector-of-rows))
+        vectorized (into [] empty-removed)
+        vector-of-rows (mapv row-to-map vectorized)
+        useful-rows (take-while (fn [z] (> (count z) 0)) vector-of-rows)
+        final-form (into {} (into [] useful-rows))]
+    final-form))
+
+;; validate nlc invoices
+
+(defn validate-date
+  [coll]
+  (let [given-date (get coll :invoice-date)
+        split-date (string/split given-date #"/")
+        month (get split-date 0)
+        day (get split-date 1)
+        year (get split-date 2)
+        validated-month (<= (read-string month) 12)
+        validated-day (<= (read-string day) 31)
+        validated-year (or (= (count year) 2) (= (count year) 4))
+        validated-date (and validated-month validated-day validated-year)]
+    validated-date))
+
+(defn validate-invoice-no
+  [coll]
+  (let [given-inv-no (get coll :invoice-no)
+        validated-char-lim (<= (count given-inv-no) 12)
+        validated-no-space-test (not (string/includes? given-inv-no " "))
+        validated-invoice-no (and validated-char-lim validated-no-space-test)]
+    validated-invoice-no))
+
+(defn validate-billing-dept
+  [coll]
+  (let [given-bd (get coll :billing-department)
+        validated-bd (in? ["Taxonomy"
+                           "Engineering"
+                           "Product"
+                           "Marketing"
+                           "Client Engagement"
+                           "BD"
+                           "Finance"
+                           "People & Culture"
+                           "Corp IT"
+                           "Corporate"
+                           "R&D"] given-bd)]
+    validated-bd))
+
+(defn validate-taxonomy
+  [coll]
+  (let [given-taxonomy (get coll :taxonomy-projects)
+        validated-taxonomy (in? ["Special_Projects"
+                                 "Danish_Denmark"
+                                 "Dutch_Netherlands"
+                                 "English_Australia"
+                                 "English UK"
+                                 "English_US"
+                                 "English_US_Spanish_Mexico"
+                                 "Finnish_Finland"
+                                 "Flemish_Belgium"
+                                 "French_Canada"
+                                 "French_Belgium"
+                                 "French_France"
+                                 "German_Germany"
+                                 "IOL_Italy (fka seat)"
+                                 "Italian_Italy"
+                                 "Norwegian_Norway"
+                                 "Paginas_Budg_Portuguese_Portugal"
+                                 "Portuguese_Brazil"
+                                 "Spanish_Argentina"
+                                 "Spanish_Colombia"
+                                 "Spanish_Latin America"
+                                 "Spanish_Mexico"
+                                 "Spanish_Spain"
+                                 "Swedish_Sweden"] given-taxonomy)]
+    validated-taxonomy))
+
+(defn validate-nlc-name
+  [coll]
+  (let [given-name (get coll :nlc-name)
+        validated-nlc-name (> (count given-name) 0)]
+    validated-nlc-name))
+
+(defn validate-nlc-address
+  [coll]
+  (let [given-address (get coll :nlc-address)
+        validated-nlc-address (> (count given-address) 0)]
+    validated-nlc-address))
+
+(defn validate-nlc-phone
+  [coll]
+  (let [given-phone (get coll :nlc-phone)
+        phone-number (string/replace given-phone #"-" "")
+        validated-nlc-phone (= (count phone-number) 10)]
+    validated-nlc-phone))
+
+(defn validate-nlc-invoice
+  [coll]
+  (println "Billing:" (validate-billing-dept coll))
+  (println "Taxonomy:" (validate-taxonomy coll))
+  (println "Name:" (validate-nlc-name coll))
+  (println "Address:" (validate-nlc-address coll))
+  (println "Phone Number:" (validate-nlc-phone coll))
+  (println "Date:" (validate-date coll))
+  (println "Invoice No:" (validate-invoice-no coll))
+  (and (validate-billing-dept coll)
+       (validate-taxonomy coll)
+       (validate-nlc-name coll)
+       (validate-nlc-address coll)
+       (validate-nlc-phone coll)
+       (validate-date coll)
+       (validate-invoice-no coll)))
+
+;;validate contractor invoices
+
+(defn validate-contr-name
+  [coll]
+  (let [given-name (get coll :name)
+        validated-contr-name (> (count given-name) 0)]
+    validated-contr-name))
+
+(defn validate-contr-address
+  [coll]
+  (let [given-address (get coll :address)
+        validated-contr-address (> (count given-address) 0)]
+    validated-contr-address))
+
+(defn validate-contr-phone
+  [coll]
+  (let [given-phone (get coll :phone)
+        phone-number (string/replace given-phone #"-" "")
+        validated-contr-phone (= (count phone-number) 10)]
+    validated-contr-phone))
+
+(defn validate-contr-invoice
+  [coll]
+  (println "Billing:" (validate-billing-dept coll))
+  (println "Name:" (validate-contr-name coll))
+  (println "Address:" (validate-contr-address coll))
+  (println "Phone Number:" (validate-contr-phone coll))
+  (println "Date:" (validate-date coll))
+  (println "Invoice No:" (validate-invoice-no coll))
+  (and (validate-billing-dept coll)
+       (validate-contr-name coll)
+       (validate-contr-address coll)
+       (validate-contr-phone coll)
+       (validate-date coll)
+       (validate-invoice-no coll)))
 
 ;;(def x (read-csv "example2.csv"))
 ;;(def y (nth x 1))
@@ -129,7 +276,7 @@
 ;=> {:NLC-Address "1234 Johnson Dr.", :Invoice-Date "06/25/2019"}
 ; (row-to-map (get j 1))
 ;=> {:NLC-Address "1234 Johnson Dr.", :Invoice-Date "06/25/2019"}
-
+;; (def billing ["Taxonomy" "Engineering" "Product" "Marketing" "Client Engagement" "BD" "Finance" "People & Culture" "Corp IT" "Corporate" "R&D"])
 
 (defn find-headers [filename])
 
