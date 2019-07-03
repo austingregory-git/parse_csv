@@ -245,6 +245,92 @@
        (validate-date coll)
        (validate-invoice-no coll)))
 
+;; Construct iif from contractor invoices
+
+(defn construct-iif-headers
+  []
+  (str "!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\tADDR5\tDUEDATE\tTERMS"
+       "\n!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tQNTY\tREIMBEXP\tSERVICEDATE"
+       "\n!ENDTRNS\n"))
+
+(defn contr-construct-iif-trns
+  [coll]
+  (str "TRNS\t\tBILL\t"
+       (:invoice-date coll) "\t"
+       (:billing-department coll) "\t"
+       (:name coll) "\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
+       (:address coll) "\t\t\n"))
+
+(defn contr-construct-iif-spl
+  [coll]
+  (str "SPL\t\tBILL\t"
+       (:invoice-date coll) "\t"
+       (:billing-department coll) "\t"
+       (:name coll) "\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
+       (:address coll) "\t\t\n"))
+
+(defn construct-iif-terminator
+  []
+  (str "ENDTRNS"))
+
+(defn contr-write-to-iif
+  [filename coll]
+  (with-open [w (clojure.java.io/writer filename :append true)]
+       (.write w (str (construct-iif-headers)
+                      (contr-construct-iif-trns coll)
+                      (contr-construct-iif-spl coll)
+                      (construct-iif-terminator)))))
+
+;; construct iif from nlc invoices
+
+(defn nlc-construct-iif-trns
+  [coll]
+  (str "TRNS\t\tBILL\t"
+       (:invoice-date coll) "\t"
+       (:billing-department coll) "\t"
+       (:nlc-name coll) "\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
+       (:nlc-address coll) "\t\t\n"))
+
+(defn nlc-construct-iif-spl
+  [coll]
+  (str "SPL\t\tBILL\t"
+       (:invoice-date coll) "\t"
+       (:billing-department coll) "\t"
+       (:nlc-name coll) "\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
+       (:nlc-address coll) "\t\t\n"))
+
+(defn nlc-write-to-iif
+  [filename coll]
+  (with-open [w (clojure.java.io/writer filename :append true)]
+    (.write w (str (construct-iif-headers)
+                   (nlc-construct-iif-trns coll)
+                   (nlc-construct-iif-spl coll)
+                   (construct-iif-terminator)))))
+
+;; Master Functions -- CSV file gets parsed into a hashmap. That hashmap goes through validation
+;; checks. Then, an iif file is constructed using that hashmap. An if statement needs to be added
+;; so that it only constructs the iif file if the validation succeeds.
+
+(defn contr-csv-validate-iif
+  [csv-filename iif-filename]
+  (let [internal-form (parse-csv-to-if csv-filename)
+        validated-if (validate-contr-invoice internal-form)
+        constructed-iif (contr-write-to-iif iif-filename internal-form)]
+    validated-if))
+
+(defn nlc-csv-validate-iif
+  [csv-filename iif-filename]
+  (let [internal-form (parse-csv-to-if csv-filename)
+        validated-if (validate-nlc-invoice internal-form)
+        constructed-iif (nlc-write-to-iif iif-filename internal-form)]
+    validated-if))
+
+
+
 ;;(def x (read-csv "example2.csv"))
 ;;(def y (nth x 1))
 ;;(reduce-csv-row y [1 2 8 9])
