@@ -20,6 +20,28 @@
      (doall
        (csv/read-csv reader)))))
 
+(defn list-filenames
+  [path]
+  (seq (.list (clojure.java.io/file path))))
+
+(defn read-each-csv-from-directory
+  [path]
+  (with-open [r (io/input-stream (first (list-filenames path)))]
+    (doall
+      (csv/read-csv r))))
+
+(defn write-iif-using-output-stream
+  [filename]
+  (with-open [os (io/output-stream filename)]
+    (.write os 65)))
+
+(defn rw-input-test
+  [reader writer]
+  (with-open writer
+    (with-open reader
+      (doall
+        (csv/read-csv reader)))))
+
 ;;(def x (read-csv "example2.csv"))
 ;; (.indexOf (nth x 1) "NLC Name") => 1
 ;(nth x 1)
@@ -104,6 +126,10 @@
         useful-rows (take-while (fn [z] (> (count z) 0)) vector-of-rows)
         final-form (into {} (into [] useful-rows))]
     final-form))
+
+(defn parse-all-csv-to-if
+  [path]
+  (into [] (map parse-csv-to-if (list-filenames path))))
 
 ;; validate nlc invoices
 
@@ -232,6 +258,7 @@
 
 (defn validate-contr-invoice
   [coll]
+  (println "Validation for invoice:" (:name coll))
   (println "Billing:" (validate-billing-dept coll))
   (println "Name:" (validate-contr-name coll))
   (println "Address:" (validate-contr-address coll))
@@ -245,11 +272,15 @@
        (validate-date coll)
        (validate-invoice-no coll)))
 
+(defn validate-all-contr-invoice
+  [coll]
+  (map validate-contr-invoice coll))
+
 ;; Construct iif from contractor invoices
 
 (defn construct-iif-headers
   []
-  (str "!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\tADDR5\tDUEDATE\tTERMS"
+  (str "!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\tADDR1\tDUEDATE\tTERMS"
        "\n!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tQNTY\tREIMBEXP\tSERVICEDATE"
        "\n!ENDTRNS\n"))
 
@@ -257,9 +288,9 @@
   [coll]
   (str "TRNS\t\tBILL\t"
        (:invoice-date coll) "\t"
-       (:billing-department coll) "\t"
+       "Accounts Payable\t"
        (:name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
        (:address coll) "\t\t\n"))
 
 (defn contr-construct-iif-spl
@@ -267,9 +298,10 @@
   (str "SPL\t\tBILL\t"
        (:invoice-date coll) "\t"
        (:billing-department coll) "\t"
-       (:name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
-       (:address coll) "\t\t\n"))
+       "\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
+       "\t\t\n"
+       "ENDTRNS\n\n"))
 
 (defn construct-iif-terminator
   []
@@ -280,8 +312,18 @@
   (with-open [w (clojure.java.io/writer filename :append true)]
        (.write w (str (construct-iif-headers)
                       (contr-construct-iif-trns coll)
-                      (contr-construct-iif-spl coll)
-                      (construct-iif-terminator)))))
+                      (contr-construct-iif-spl coll)))))
+
+(defn contr-write-to-iif-from-all
+  [coll]
+  (with-open [w (clojure.java.io/writer "iif-example.iif" :append true)]
+    (.write w (str (construct-iif-headers)
+                   (contr-construct-iif-trns coll)
+                   (contr-construct-iif-spl coll)))))
+
+(defn contr-write-all-to-iif
+  [coll]
+  (map contr-write-to-iif-from-all coll))
 
 ;; construct iif from nlc invoices
 
@@ -289,9 +331,9 @@
   [coll]
   (str "TRNS\t\tBILL\t"
        (:invoice-date coll) "\t"
-       (:billing-department coll) "\t"
+       "Accounts Payable" "\t"
        (:nlc-name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
        (:nlc-address coll) "\t\t\n"))
 
 (defn nlc-construct-iif-spl
@@ -299,9 +341,9 @@
   (str "SPL\t\tBILL\t"
        (:invoice-date coll) "\t"
        (:billing-department coll) "\t"
-       (:nlc-name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t"
-       (:nlc-address coll) "\t\t\n"))
+       "\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
+       "\t\t\n"))
 
 (defn nlc-write-to-iif
   [filename coll]
@@ -328,6 +370,13 @@
         validated-if (validate-nlc-invoice internal-form)
         constructed-iif (nlc-write-to-iif iif-filename internal-form)]
     validated-if))
+
+(defn contr-all-csv-validate-iif
+  [path]
+  (let [internal-form (parse-all-csv-to-if path)
+        validated-if (validate-all-contr-invoice internal-form)
+        constructed-iif (contr-write-all-to-iif internal-form)]
+    validated-if constructed-iif))
 
 
 
@@ -363,7 +412,8 @@
 ; (row-to-map (get j 1))
 ;=> {:NLC-Address "1234 Johnson Dr.", :Invoice-Date "06/25/2019"}
 ;; (def billing ["Taxonomy" "Engineering" "Product" "Marketing" "Client Engagement" "BD" "Finance" "People & Culture" "Corp IT" "Corporate" "R&D"])
-
+;; (seq (.list (clojure.java.io/file "/Users/Steve/IdeaProjects/parse_csv/contr_example_folder")))
+;; => ("contractor-invoice-example.csv" "contractor-invoice-example2.csv")
 (defn find-headers [filename])
 
 (defn csv-data->maps [csv-data]
