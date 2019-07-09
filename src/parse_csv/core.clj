@@ -4,70 +4,36 @@
             [clojure.walk :as walk]
             [clojure.string :as string]
             [clojure.walk :refer [postwalk]]
-            [dk.ative.docjure.spreadsheet :as spreadsheet]))
+            [dk.ative.docjure.spreadsheet :as spreadsheet]
+            [pdfboxing.text :as text]
+            [pdfboxing.form :as form])
+  (:import [org.apache.pdfbox.pdfparser BaseParser]
+           [org.apache.pdfbox.pdfparser COSParser]
+           [org.apache.pdfbox.pdfparser PDFParser]
+           [org.apache.pdfbox.io RandomAccessRead]
+           [java.io RandomAccessFile]
+           [org.apache.pdfbox.pdmodel PDDocument]
+           [org.apache.pdfbox.text PDFTextStripper]))
 
 ;; [pdfboxing.text :as text]
-
-(defn foo
-  "I don't do a whole lot."
-  [x]
-  (println x "Hello, World!"))
-
 
 (defn read-csv
   [filename]
   (into [] (with-open [reader (io/reader filename)]
-     (doall
-       (csv/read-csv reader)))))
+             (doall
+               (csv/read-csv reader)))))
+
+(defn read-pdf
+  [filename]
+  (.parse (PDFParser. (RandomAccessFile. filename "r"))))
+
+(defn read-pdf2
+  [filename]
+  (text/extract filename))
 
 (defn list-filenames
   [path]
   (seq (.list (clojure.java.io/file path))))
-
-(defn read-each-csv-from-directory
-  [path]
-  (with-open [r (io/input-stream (first (list-filenames path)))]
-    (doall
-      (csv/read-csv r))))
-
-(defn write-iif-using-output-stream
-  [filename]
-  (with-open [os (io/output-stream filename)]
-    (.write os 65)))
-
-(defn rw-input-test
-  [reader writer]
-  (with-open writer
-    (with-open reader
-      (doall
-        (csv/read-csv reader)))))
-
-;;(def x (read-csv "example2.csv"))
-;; (.indexOf (nth x 1) "NLC Name") => 1
-;(nth x 1)
-;=> ["" "NLC Name" "Soup, Inc" "" "" "" "" "" "Invoice No" "123456"]
-;; (get (nth x 1) (.indexOf (nth x 1) "NLC Name"))
-;=> "NLC Name"
-;(get (nth x 1) (+ (.indexOf (nth x 1) "NLC Name") 1))
-;=> "Soup, Inc"
-;;(get (nth x 1) (inc (.indexOf (nth x 1) "NLC Name")))
-;=> "Soup, Inc"
-
-(defn reduce-csv-row
-  "Accepts a csv-row (a vector) a list of columns to extract,
-   and reduces (and returns) a csv-row to a subset based on
-   selection using the values in col-nums (a vector of integer
-   vector positions.)"
-
-  [csv-row col-nums]
-
-  (reduce
-    (fn [out-csv-row col-num]
-      ; Don't consider short vectors containing junk.
-      (if-not (<= (count csv-row) 1)
-        (conj out-csv-row (nth csv-row col-num nil))))
-    []
-    col-nums))
 
 (defn in?
   "true if coll contains elm"
@@ -91,22 +57,6 @@
               [key val]))]
     (postwalk (fn [x] (if (map? x) (into {} (map f x)) x))
               m)))
-
-(defn map-keys
-  [f m]
-  (persistent!
-    (reduce-kv (fn [m key val] (assoc! m (f key) val))
-               (transient (empty m)) m)))
-
-(defn macro-parse-csv-to-if
-  [filename]
-  (->> filename
-      (read-csv ,,,)
-      (map remove-white-space ,,,)
-       (remove empty? ,,,)
-       (take 3 ,,,)
-       (into [] ,,,)
-       (get ,,, 1)))
 
 (defn row-to-map
   [row]
@@ -153,6 +103,24 @@
         validated-no-space-test (not (string/includes? given-inv-no " "))
         validated-invoice-no (and validated-char-lim validated-no-space-test)]
     validated-invoice-no))
+
+(defn construct-bd-map
+  []
+  (let [billing-dept-map (hash-map :bd "BD:BD Expenses"
+                                   :r&d "R&D:R&D Expenses"
+                                   :engineering "Engineering:Engineering Expenses"
+                                   :product "Product:Product Expenses"
+                                   :marketing "Marketing:Marketing Expenses"
+                                   :client-engagement "Client Engagement:Client Engagement Expenses"
+                                   :finance "Finance:Finance Expenses"
+                                   :people&culture "People & Culture:People & Culture Expenses"
+                                   :corp-it "Corp IT:Corp IT Expenses"
+                                   :corporate "Corporate:Corporate Expenses"
+                                   :taxonomy {:special-projects "Special Projects:Special Projects Expenses"
+                                              :danish_denmark "Danish_Denmark:Danish_Denmark Expenses"
+                                              :dutch_netherlands "Dutch_Netherlands:Dutch_Netherland Expenses"})]
+    billing-dept-map))
+
 
 (defn validate-billing-dept
   [coll]
@@ -220,6 +188,7 @@
 
 (defn validate-nlc-invoice
   [coll]
+  (println "Validation for invoice:" (:nlc-name coll))
   (println "Billing:" (validate-billing-dept coll))
   (println "Taxonomy:" (validate-taxonomy coll))
   (println "Name:" (validate-nlc-name coll))
@@ -234,6 +203,10 @@
        (validate-nlc-phone coll)
        (validate-date coll)
        (validate-invoice-no coll)))
+
+(defn validate-all-nlc-invoice
+  [coll]
+  (map validate-nlc-invoice coll))
 
 ;;validate contractor invoices
 
@@ -257,6 +230,7 @@
     validated-contr-phone))
 
 (defn validate-contr-invoice
+  "Returns True if all validations succeed, else false"
   [coll]
   (println "Validation for invoice:" (:name coll))
   (println "Billing:" (validate-billing-dept coll))
@@ -303,10 +277,6 @@
        "\t\t\n"
        "ENDTRNS\n\n"))
 
-(defn construct-iif-terminator
-  []
-  (str "ENDTRNS"))
-
 (defn contr-write-to-iif
   [filename coll]
   (with-open [w (clojure.java.io/writer filename :append true)]
@@ -343,7 +313,8 @@
        (:billing-department coll) "\t"
        "\t\t"
        (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       "\t\t\n"))
+       "\t\t\n"
+       "ENDTRNS\n\n"))
 
 (defn nlc-write-to-iif
   [filename coll]
@@ -353,9 +324,19 @@
                    (nlc-construct-iif-spl coll)
                    (construct-iif-terminator)))))
 
+(defn nlc-write-to-iif-from-all
+  [coll]
+  (with-open [w (clojure.java.io/writer "iif-example.iif" :append true)]
+    (.write w (str (construct-iif-headers)
+                   (nlc-construct-iif-trns coll)
+                   (nlc-construct-iif-spl coll)))))
+
+(defn nlc-write-all-to-iif
+  [coll]
+  (map nlc-write-to-iif-from-all coll))
+
 ;; Master Functions -- CSV file gets parsed into a hashmap. That hashmap goes through validation
-;; checks. Then, an iif file is constructed using that hashmap. An if statement needs to be added
-;; so that it only constructs the iif file if the validation succeeds.
+;; checks. Then, an iif file is constructed using that hashmap.
 
 (defn contr-csv-validate-iif
   [csv-filename iif-filename]
@@ -371,59 +352,62 @@
         constructed-iif (nlc-write-to-iif iif-filename internal-form)]
     validated-if))
 
-(defn contr-all-csv-validate-iif
-  [path]
-  (let [internal-form (parse-all-csv-to-if path)
-        validated-if (validate-all-contr-invoice internal-form)
-        constructed-iif (contr-write-all-to-iif internal-form)]
-    validated-if constructed-iif))
+(defn csv-reader-to-internal-form
+  [reader]
+  (let [contents (into [] (doall (csv/read-csv reader)))
+        ws-removed (map remove-white-space contents)
+        empty-removed (remove empty? ws-removed)
+        vectorized (into [] empty-removed)
+        vector-of-rows (mapv row-to-map vectorized)
+        useful-rows (take-while (fn [z] (> (count z) 0)) vector-of-rows)
+        final-form (into {} (into [] useful-rows))]
+    final-form))
 
+(defn validate-invoice
+  [form]
+  (if (:taxonomy-projects form)
+    (validate-nlc-invoice form)
+    (validate-contr-invoice form)))
 
+(defn internal-form-to-iif-writer
+  [writer form]
+  (try
+    (if (:taxonomy-projects form)
+      (.write writer (str (construct-iif-headers)
+                          (nlc-construct-iif-trns form)
+                          (nlc-construct-iif-spl form)))
+      (.write writer (str (construct-iif-headers)
+                          (contr-construct-iif-trns form)
+                          (contr-construct-iif-spl form))))
+    true
+    (catch Exception e
+      (println "Exception Error Writing")
+      false)))
 
-;;(def x (read-csv "example2.csv"))
-;;(def y (nth x 1))
-;;(reduce-csv-row y [1 2 8 9])
-;; => ["NLC Name" "Soup, Inc" "Invoice No" "123456"]
-;;(remove (fn [x]
-;;          (= (count x) 0)) y)
-;; => ("NLC Name" "Soup, Inc" "Invoice No" "123456")
-;;(filter (fn [x] (not= (count x) 0)) y)
-;=> ("NLC Name" "Soup, Inc" "Invoice No" "123456")
-;                   (= (count z) 0)) y))
-;  => ["NLC Name" "Soup, Inc" "Invoice No" "123456"]
-; (remove empty? (map remove-white-space x))
-; (take 3 (remove empty? (map remove-white-space x)))
-; (def j (into [] (take 3 (remove empty? (map remove-white-space x)))))
-; (partition 2 (get j 1))
-;=> (("NLC Address" "1234 Johnson Dr.") ("Invoice Date" "06/25/2019"))
-; (partition 2 (get j 2))
-;=> (("NLC Phone" "222-333-4444"))
-; (def k (partition 2 (get j 1)))
-; (into {} (map vec k))
-; => {"NLC Address" "1234 Johnson Dr.", "Invoice Date" "06/25/2019"}
-; (clojure.walk/keywordize-keys (into {} (map vec k)))
-; => {:NLC Address, "1234 Johnson Dr." :Invoice, Date "06/25/2019"}
-;(clojure.string/replace "NLC Address" #" " "-")
-;=> "NLC-Address"
-; (def h (into {} (map vec k)))
-; (def g (into [] (map vec k)))
-; (keywordize h)
-;=> {:NLC-Address "1234 Johnson Dr.", :Invoice-Date "06/25/2019"}
-; (row-to-map (get j 1))
-;=> {:NLC-Address "1234 Johnson Dr.", :Invoice-Date "06/25/2019"}
-;; (def billing ["Taxonomy" "Engineering" "Product" "Marketing" "Client Engagement" "BD" "Finance" "People & Culture" "Corp IT" "Corporate" "R&D"])
-;; (seq (.list (clojure.java.io/file "/Users/Steve/IdeaProjects/parse_csv/contr_example_folder")))
-;; => ("contractor-invoice-example.csv" "contractor-invoice-example2.csv")
-(defn find-headers [filename])
+(defn csv-reader-to-iif-writer
+  [reader writer]
+  (if-let [internal-form (csv-reader-to-internal-form reader)]
+      (if-let [validated-if (validate-invoice internal-form)]
+          (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
+              true
+              (println "Writer failed"))
+          (println "Validation failed"))
+      (println "Reader failed")))
 
-(defn csv-data->maps [csv-data]
-   (into [] (map hash-map
-                 (->> (first csv-data) ;; First row is the header
-                      (map keyword) ;; Drop if you want string keys instead
-                      repeat)
-                 (rest csv-data))))
+(defn csv-file-to-iif-file
+  [csv-filename iif-filename]
+  (with-open [r (io/reader csv-filename)
+              w (io/writer iif-filename)]
+    (csv-reader-to-iif-writer r w)))
 
-(csv-data->maps (read-csv reader))
+(defn csv-dir-to-iif-file
+  [csv-dirname iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (run! (fn [csv-filename] (with-open [r (io/reader csv-filename)]
+                               (csv-reader-to-iif-writer r w)))
+          (list-filenames csv-dirname))))
+
+;; Excel
 
 (defn read-rows [filename]
   (->>
@@ -431,5 +415,4 @@
     (spreadsheet/select-sheet "Sheet1")
     (spreadsheet/select-columns {:A :a-name :B :b-name :C :c-name :D :d-name :E :e-name :F :f-name :G :g-name :H :h-name :I :i-name})))
 
-(defn read-pdf [filename]
-  (text/extract filename))
+;; PDF

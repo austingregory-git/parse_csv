@@ -6,5 +6,7 @@
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [org.clojure/data.csv "0.1.4"]
                  [dk.ative/docjure "1.7.0"]
-                 [pdfboxing "0.1.13"]]
+                 [org.eclipse.birt.runtime/org.apache.commons.logging "1.1.1.v201101211721"]
+                 [org.apache.pdfbox/pdfbox "2.0.15"]
+                 [pdfboxing "0.1.14"]]
   :repl-options {:init-ns parse-csv.core})

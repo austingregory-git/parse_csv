@@ -19,10 +19,8 @@
     <orderEntry type="library" name="Leiningen: dk.ative/docjure:1.7.0" level="project" />
     <orderEntry type="library" name="Leiningen: dom4j:1.6.1" level="project" />
     <orderEntry type="library" name="Leiningen: nrepl:0.6.0" level="project" />
-    <orderEntry type="library" name="Leiningen: org.apache.pdfbox/fontbox:2.0.6" level="project" />
-    <orderEntry type="library" name="Leiningen: org.apache.pdfbox/pdfbox:2.0.6" level="project" />
-    <orderEntry type="library" name="Leiningen: org.apache.pdfbox/preflight:2.0.6" level="project" />
-    <orderEntry type="library" name="Leiningen: org.apache.pdfbox/xmpbox:2.0.6" level="project" />
+    <orderEntry type="library" name="Leiningen: org.apache.pdfbox/fontbox:2.0.15" level="project" />
+    <orderEntry type="library" name="Leiningen: org.apache.pdfbox/pdfbox:2.0.15" level="project" />
     <orderEntry type="library" name="Leiningen: org.apache.poi/poi-ooxml-schemas:3.9" level="project" />
     <orderEntry type="library" name="Leiningen: org.apache.poi/poi-ooxml:3.9" level="project" />
     <orderEntry type="library" name="Leiningen: org.apache.poi/poi:3.9" level="project" />
@@ -31,7 +29,8 @@
     <orderEntry type="library" name="Leiningen: org.clojure/core.specs.alpha:0.2.44" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/data.csv:0.1.4" level="project" />
     <orderEntry type="library" name="Leiningen: org.clojure/spec.alpha:0.2.176" level="project" />
-    <orderEntry type="library" name="Leiningen: pdfboxing:0.1.13" level="project" />
+    <orderEntry type="library" name="Leiningen: org.eclipse.birt.runtime/org.apache.commons.logging:1.1.1.v201101211721" level="project" />
+    <orderEntry type="library" name="Leiningen: pdfboxing:0.1.14" level="project" />
     <orderEntry type="library" name="Leiningen: stax/stax-api:1.0.1" level="project" />
     <orderEntry type="library" name="Leiningen: xml-apis:1.0.b2" level="project" />
   </component>

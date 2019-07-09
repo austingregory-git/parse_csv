@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="Leiningen: org.apache.pdfbox/pdfbox:2.0.15">
+    <CLASSES>
+      <root url="jar://$MAVEN_REPOSITORY$/org/apache/pdfbox/pdfbox/2.0.15/pdfbox-2.0.15.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
