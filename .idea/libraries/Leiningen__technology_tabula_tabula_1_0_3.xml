@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="Leiningen: technology.tabula/tabula:1.0.3">
+    <CLASSES>
+      <root url="jar://$MAVEN_REPOSITORY$/technology/tabula/tabula/1.0.3/tabula-1.0.3.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

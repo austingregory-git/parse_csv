@@ -6,14 +6,7 @@
             [clojure.walk :refer [postwalk]]
             [dk.ative.docjure.spreadsheet :as spreadsheet]
             [pdfboxing.text :as text]
-            [pdfboxing.form :as form])
-  (:import [org.apache.pdfbox.pdfparser BaseParser]
-           [org.apache.pdfbox.pdfparser COSParser]
-           [org.apache.pdfbox.pdfparser PDFParser]
-           [org.apache.pdfbox.io RandomAccessRead]
-           [java.io RandomAccessFile]
-           [org.apache.pdfbox.pdmodel PDDocument]
-           [org.apache.pdfbox.text PDFTextStripper]))
+            [pdfboxing.form :as form]))
 
 ;; [pdfboxing.text :as text]
 
@@ -24,10 +17,6 @@
                (csv/read-csv reader)))))
 
 (defn read-pdf
-  [filename]
-  (.parse (PDFParser. (RandomAccessFile. filename "r"))))
-
-(defn read-pdf2
   [filename]
   (text/extract filename))
 
@@ -58,6 +47,25 @@
     (postwalk (fn [x] (if (map? x) (into {} (map f x)) x))
               m)))
 
+;; actual nlc invoice uses Total Amount, not Total Due!!!
+
+(defn nlc-keys?
+  [string]
+  (and (string/includes? string "NLC Name:")
+       (string/includes? string "NLC Address:")
+       (string/includes? string "NLC Phone:")
+       (string/includes? string "Taxonomy/Projects:")
+       (string/includes? string "Billing Department")
+       (string/includes? string "Total Amount:")))
+
+(defn contr-keys?
+  [string]
+  (and (string/includes? string "Name:")
+       (string/includes? string "Address:")
+       (string/includes? string "Phone:")
+       (string/includes? string "Billing Department:")
+       (string/includes? string "Total Due:")))
+
 (defn row-to-map
   [row]
   (let [paired-row (partition 2 row)
@@ -76,6 +84,97 @@
         useful-rows (take-while (fn [z] (> (count z) 0)) vector-of-rows)
         final-form (into {} (into [] useful-rows))]
     final-form))
+
+(defn find-nlc-name
+  [string]
+  (string/trim (last (first (re-seq #"NLC Name:(.*)Invoice No:" string)))))
+
+(defn find-nlc-address
+  [string]
+  (string/trim (last (first (re-seq #"NLC Address:(.*)Invoice Date:" string)))))
+
+(defn find-nlc-phone
+  [string]
+  (string/trim (last (first (re-seq #"NLC Phone:(.*)\r" string)))))
+
+(defn find-contr-name
+  [string]
+  (string/trim (last (first (re-seq #"Name:(.*)Invoice No:" string)))))
+
+(defn find-contr-address
+  [string]
+  (string/trim (last (first (re-seq #"Address:(.*)Invoice Date:" string)))))
+
+(defn find-contr-phone
+  [string]
+  (string/trim (last (first (re-seq #"Phone:(.*)\r" string)))))
+
+(defn find-invoice-date
+  [string]
+  (string/trim (last (first (re-seq #"Invoice Date:(.*)\r" string)))))
+
+(defn find-invoice-no
+  [string]
+  (string/trim (last (first (re-seq #"Invoice No:(.*)\r" string)))))
+
+(defn find-taxonomy-projects
+  [string]
+  (string/trim (last (first (re-seq #"Taxonomy/Projects:(.*)Billing Department:" string)))))
+
+(defn find-billing-department
+  [string]
+  (string/trim (last (first (re-seq #"Billing Department:(.*)\r" string)))))
+
+(defn find-total-due
+  [string]
+  (string/trim (last (first (re-seq #"Total Due:(.*)\r" string)))))
+
+(defn find-total-amount
+  [string]
+  (string/trim (last (first (re-seq #"Total Amount:(.*)\r" string)))))
+
+(defn find-x-given-regex-and-string
+  [regex string]
+  (string/trim (last (first (re-seq regex string)))))
+
+(defn construct-nlc-map-from-pdf-contents
+  [string]
+  (if (nlc-keys? string)
+    (let [internal-form (hash-map :nlc-name (find-nlc-name string)
+                                  :nlc-address (find-nlc-address string)
+                                  :nlc-phone (find-nlc-phone string)
+                                  :invoice-no (find-invoice-no string)
+                                  :invoice-date (find-invoice-date string)
+                                  :billing-department (find-billing-department string)
+                                  :taxonomy-projects (find-taxonomy-projects string)
+                                  :total-due (find-total-amount string))]
+      internal-form)
+    (println "Error -- Insufficient Keys Found")))
+
+(defn construct-contr-map-from-pdf-contents
+  [string]
+  (if (contr-keys? string)
+    (let [internal-form (hash-map :name (find-contr-name string)
+                                  :address (find-contr-address string)
+                                  :phone (find-contr-phone string)
+                                  :invoice-no (find-invoice-no string)
+                                  :invoice-date (find-invoice-date string)
+                                  :billing-department (find-billing-department string)
+                                  :total-due (find-total-due string))]
+      internal-form)
+    (println "Error -- Insufficient Keys Found")))
+
+(defn construct-map-from-pdf-contents
+  [string]
+  (if (string/includes? string "Taxonomy/Projects")
+    (construct-nlc-map-from-pdf-contents string)
+    (construct-contr-map-from-pdf-contents string)))
+
+(defn parse-pdf-to-if
+  [filename]
+  (let [contents (read-pdf filename)
+        internal-form (construct-map-from-pdf-contents contents)]
+    internal-form))
 
 (defn parse-all-csv-to-if
   [path]
@@ -321,8 +420,7 @@
   (with-open [w (clojure.java.io/writer filename :append true)]
     (.write w (str (construct-iif-headers)
                    (nlc-construct-iif-trns coll)
-                   (nlc-construct-iif-spl coll)
-                   (construct-iif-terminator)))))
+                   (nlc-construct-iif-spl coll)))))
 
 (defn nlc-write-to-iif-from-all
   [coll]
@@ -363,6 +461,12 @@
         final-form (into {} (into [] useful-rows))]
     final-form))
 
+(defn pdf-reader-to-internal-form
+  [filename]
+  (let [contents (read-pdf filename)
+        internal-form (construct-map-from-pdf-contents contents)]
+    internal-form))
+
 (defn validate-invoice
   [form]
   (if (:taxonomy-projects form)
@@ -383,6 +487,31 @@
     (catch Exception e
       (println "Exception Error Writing")
       false)))
+
+(defn pdf-filename-to-iif-writer
+  [pdf-filename writer]
+  (if-let [internal-form (pdf-reader-to-internal-form pdf-filename)]
+    (if-let [validated-if (validate-invoice internal-form)]
+      (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
+        true
+        (println "Writer failed"))
+      (println "Validation failed"))
+    (println "Parser Failed")))
+
+
+;;TODO
+
+(defn pdf-file-to-iif-file
+  [pdf-filename iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (pdf-filename-to-iif-writer pdf-filename w)))
+
+(defn pdf-dir-to-iif-file
+  [pdf-dirname iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (run! (fn [pdf-filename] (with-open [r (io/reader csv-filename)]
+                               (pdf-filename-to-iif-writer pdf-filename w)))
+          (list-filenames pdf-dirname))))
 
 (defn csv-reader-to-iif-writer
   [reader writer]
