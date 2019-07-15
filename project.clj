@@ -9,5 +9,6 @@
                  [org.eclipse.birt.runtime/org.apache.commons.logging "1.1.1.v201101211721"]
                  [org.apache.pdfbox/pdfbox "2.0.15"]
                  [pdfboxing "0.1.14"]
-                 [technology.tabula/tabula "1.0.3"]]
+                 [technology.tabula/tabula "1.0.3"]
+                 [clojure.java-time "0.3.2"]]
   :repl-options {:init-ns parse-csv.core})
