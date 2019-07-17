@@ -32,9 +32,8 @@
   [coll elm]
   (some #(= elm %) coll))
 
-;;remove-empty
-(defn remove-white-space
-  "Given a row (of strings), remove all of the white-space from each string within the row"
+(defn remove-empty
+  "Given a row (of strings), remove all of the empty strings within the row"
   [row]
   (into [] (remove (fn [z]
                      (= (count z) 0)) row)))
@@ -94,11 +93,11 @@
   "Given a csv filename, parse the csv's contents, remove the white space, remove the empty rows, vectorize it, convert the rows to a map, take the useful stuff, and convert it into a single map"
   [filename]
   (let [contents (read-csv filename)
-        ws-removed (map remove-white-space contents)
-        empty-removed (remove empty? ws-removed)
-        vectorized (into [] empty-removed)
+        empty-strings-removed (map remove-empty contents)
+        empty-rows-removed (remove empty? empty-strings-removed)
+        vectorized (into [] empty-rows-removed)
         vector-of-rows (mapv row-to-map vectorized)
-        useful-rows (take-while (fn [z] (> (count z) 0)) vector-of-rows)
+        useful-rows (remove empty? vector-of-rows)
         final-form (into {} useful-rows)]
     final-form))
 
@@ -171,6 +170,10 @@
   [string]
   (find-x-given-regex-and-string #"Amount Total:(.*)\r" string))
 
+(defn find-client-name
+  [filename]
+  (find-x-given-regex-and-string #"billing-report-(.*)-2" filename))
+
 
 (defn convert-billing-dept-to-account-name-for-iif
   "Given a string (representing a value in a map, convert to a valid account name used in IIF format"
@@ -187,7 +190,9 @@
   [coll]
   (if (or (string/includes? coll "Taxonomy/Projects") (:taxonomy-projects coll))
     "NLC"
-    "Contractor"))
+    (if (:client-name coll)
+      "INV"
+      "Contractor")))
 
  (defn is-NLC?
    [coll]
@@ -200,6 +205,14 @@
   (if (= (invoice-type? coll) "Contractor")
     true
     false))
+
+(defn is-Invoice?
+  [coll]
+  (if (= (invoice-type? coll) "INV")
+    true
+    false))
+(defn generate-invoice-number
+  [year month client-key])
 
 (defn construct-nlc-map-from-pdf-contents
   "Given a string (PDF contents), construct a NLC map using finder functions IF all necessary NLC keys are found"
@@ -246,14 +259,31 @@
 
 ;; validate nlc invoices
 
+(defn date-format?
+  [date]
+  (let [split-date (string/split date #"[/-]")
+        date-format (if (= (count (first split-date)) 2)
+          "MM/DD/YYYY"
+          "YYYY-MM-DD")]
+    date-format))
+
 (defn validate-date
   "Given a collection, perform validation on the value associated with :invoice-date"
   [coll]
   (let [given-date (:invoice-date coll)
-        split-date (string/split given-date #"/")
-        month (get split-date 0)
-        day (get split-date 1)
-        year (get split-date 2)
+        updated-date (if (= (date-format? given-date) "MM/DD/YYYY")
+                       given-date
+                       (:invoice-date (assoc coll :invoice-date (string/replace (:invoice-date coll) #"/" "-"))))
+        split-date (string/split updated-date #"[/-]")
+        month (if (= (date-format? given-date) "MM/DD/YYYY")
+                (get split-date 0)
+                (get split-date 1))
+        day (if (= (date-format? given-date) "MM/DD/YYYY")
+              (get split-date 1)
+              (get split-date 2))
+        year (if (= (date-format? given-date) "MM/DD/YYYY")
+               (get split-date 2)
+               (get split-date 0))
         validated-month (<= (Long/parseLong (clojure.string/replace month #"^0+" "")) 12)
         validated-day (<= (Long/parseLong (clojure.string/replace day #"^0+" "")) 31)
         validated-year (or (= (count year) 2) (= (count year) 4))
@@ -281,30 +311,55 @@
             :people&culture "People & Culture:People & Culture Expenses"
             :corp-it "Corp IT:Corp IT Expenses"
             :corporate "Corporate:Corporate Expenses"
-            :taxonomy-projects {:special-projects "Special Projects:Special Projects Expenses"
+            :taxonomy-projects {:special-projects "Outside Services:Taxonomy Other"
                        :danish_denmark "NLCs:Taxonomy Development:Non-English (dev):Danish_Denmark:"
-                       :dutch_netherlands "NLCs:Taxonomy Development:Non-English (dev):Dutch_Netherlands:NLC Name-Dev"
-                       :english_australia "NLCs:Taxonomy Development:English (dev):English_Australia:NLC Name-Dev"
-                       :english_uk "English_UK:English_UK Expenses"
-                       :english_us "English_US:English_US Expenses"
-                       :english_us_spanish_mexico "English_US_Spanish_Mexico:English_US_Spanish_Mexico Expenses"
+                       :dutch_netherlands "NLCs:Taxonomy Development:Non-English (dev):Dutch_Netherlands:"
+                       :english_australia "NLCs:Taxonomy Development:English (dev):English_Australia:"
+                       :english_uk "NLCs:Taxonomy Development:English (dev):English_UK:"
+                       :english_us "NLCs:Taxonomy Development:English (dev):English_US:"
+                       :english_us_spanish_mexico "NLCs:Taxonomy Development:English (dev):English_US_Spanish_Mexico:"
                        :finnish_finland "NLCs:Taxonomy Development:Non-English (dev):Finnish_Finland:"
                        :flemish_belgium "NLCs:Taxonomy Development:Non-English (dev):Flemish_Belgium:"
-                       :french_canada "French_Canada:French_Canada Expenses"
-                       :french_belgium "French_Belgium:French_Belgium Expenses"
-                       :french_france "French_France:French_France Expenses"
-                       :german_germany "German_Germany:German_Germany Expenses"
-                       :iol_italy "IOL_Italy (fka Seat):IOL_Italy (fka Seat) Expenses"
-                       :italian_italy "Italian_Italy:Italian_Italy Expenses"
-                       :norwegian_norway "Norwegian_Norway:Norwegian_Norway Expenses"
-                       :paginas_budg_portuguese_portugal "Paginas_Budg_Portuguese_Portugal"
+                       :french_canada "NLCs:Taxonomy Development:Non-English (dev):French_Canada:"
+                       :french_belgium "NLCs:Taxonomy Development:Non-English (dev):French_Belgium:"
+                       :french_france "NLCs:Taxonomy Development:Non-English (dev):French_France:"
+                       :german_germany "NLCs:Taxonomy Development:Non-English (dev):German_Germany:"
+                       :iol_italy "NLCs:Taxonomy Development:Non-English (dev):IOL_Italy (fka seat):"
+                       :italian_italy "NLCs:Taxonomy Development:Non-English (dev):Italian_Italy:"
+                       :norwegian_norway "NLCs:Taxonomy Development:Non-English (dev):Norwegian_Norway:"
+                       :paginas_budg_portuguese_portugal "NLCs:Taxonomy Development:Non-English (dev):Paginas_Budg_Portuguese_Portugal:"
                        :portuguese_brazil "NLCs:Taxonomy Development:Non-English (dev):Portuguese_Brazil:"
-                       :spanish_argentina "Spanish_Argentina:Spanish_Argentina Expenses"
-                       :spanish_colombia "Spanish_Colombia:Spanish_Colombia Expenses"
-                       :spanish_latin_america "Spanish_Latin_America:Spanish_Latin_America"
-                       :spanish_mexico "Spanish_Mexico:Spanish_Mexico Expenses"
-                       :spanish_spain "Spanish_Spain:Spanish_Spain Expenses"
-                       :swedish_sweden "Swedish_Sweden:Swedish_Sweden Expenses"}))
+                       :spanish_argentina "NLCs:Taxonomy Development:Non-English (dev):Spanish_Argentina:"
+                       :spanish_colombia "NLCs:Taxonomy Development:Non-English (dev):Spanish_Colombia:"
+                       :spanish_latin_america "NLCs:Taxonomy Development:Non-English (dev):Spanish_Latin_America:"
+                       :spanish_mexico "NLCs:Taxonomy Development:Non-English (dev):Spanish_Mexico:"
+                       :spanish_spain "NLCs:Taxonomy Development:Non-English (dev):Spanish_Spain:"
+                       :swedish_sweden "NLCs:Taxonomy Development:Non-English (dev):Swedish_Sweden:"}))
+
+(def accounts-receivable
+  {:liturgicalpub "Accounts Receivable-USD:zipch-A/R"
+   :zipch "Accounts Receivable-CHF:zipch-A/R"})
+
+;;SEM, Setup, Development
+(defn setup-fee?
+  [fee-type]
+  (= fee-type "Setup"))
+
+(defn fee-type-and-client-to-quickbooks-account
+  [fee-type client-name]
+  (if (setup-fee? fee-type)
+    (str "MC-Fees-Others-Misc:Fees-Setup:Setup-Fees-" client-name)
+    (str "MC-Fees:Other Clients:" client-name)))
+
+(defn fee-type-and-client-to-quickbooks-item
+  [fee-type client-name]
+  (if (setup-fee? fee-type)
+    (str client-name ":Setup Fees")
+    (str client-name ":MC Fees")))
+
+(defn currency-and-client-to-accounts-receivable
+  [currency-type client-name]
+  (str "Accounts Receivable-" currency-type ":" client-name "-A/R"))
 
 (def valid-billing-departments
   ["Taxonomy"
@@ -442,11 +497,22 @@
        (validate-invoice-no coll)))
 
 (defn validate-invoice
+  [coll]
+  (println "Validation for invoice:" (:name coll))
+  (println "Name:" (validate-contr-name coll))
+  (println "Date:" (validate-date coll))
+  (and (validate-contr-name coll) (validate-date coll)))
+
+(defn validate-transaction
   "Given a form (hashmap), validate-nlc-invoice if the form has the appropriate key, and validate-contr-invoice otherwise"
   [form]
   (if (is-NLC? form)
     (validate-nlc-invoice form)
-    (validate-contr-invoice form)))
+    (if (is-Contractor? form)
+      (validate-contr-invoice form)
+      (if (is-Invoice? form)
+        (validate-invoice form)
+        (println "Error -- No Transaction Type Found")))))
 
 
 ;; Construct iif from contractor invoices
@@ -462,7 +528,7 @@
        "\n!ENDTRNS\n"))
 
 
-(defn contr-construct-iif-trns
+(defn construct-iif-trns-for-contractor-bill
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "TRNS\t\tBILL\t"
@@ -473,18 +539,7 @@
        (:invoice-no coll) "\t\t\t\t"
        (:address coll) "\t\t\n"))
 
-(defn contr-construct-iif-spl
-  "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
-  [coll]
-  (str "SPL\t\tBILL\t"
-       (:invoice-date coll) "\t"
-       (:billing-department coll) "\t"
-       "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       "\t\t\n"
-       "ENDTRNS\n\n"))
-
-(defn contr-construct-iif-spl-expenses-account
+(defn construct-iif-spl-for-contractor-bill
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "SPL\t\tBILL\t"
@@ -498,7 +553,7 @@
 
 ;; construct iif from nlc invoices
 
-(defn nlc-construct-iif-trns
+(defn construct-iif-trns-for-nlc-bill
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "TRNS\t\tBILL\t"
@@ -509,18 +564,7 @@
        (:invoice-no coll) "\t\t\t\t"
        (:nlc-address coll) "\t\t\n"))
 
-(defn nlc-construct-iif-spl
-  "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
-  [coll]
-  (str "SPL\t\tBILL\t"
-       (:invoice-date coll) "\t"
-       (:billing-department coll) "\t"
-       "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       "\t\t\n"
-       "ENDTRNS\n\n"))
-
-(defn nlc-construct-iif-spl-expenses-account
+(defn construct-iif-spl-for-nlc-bill
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "SPL\t\tBILL\t"
@@ -539,53 +583,31 @@
   "Constructs the string that will be used as the headers in a properly formatted IIF file for Invoices"
   []
   (str "!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\tADDR1\tDUEDATE\tTERMS"
-       "\n!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tQNTY\tREIMBEXP\tSERVICEDATE"
+       "\n!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tQNTY\tINVITEM\tSERVICEDATE"
        "\n!ENDTRNS\n"))
 
-(defn construct-iif-trns-for-contractor-invoice
+(defn construct-iif-trns-for-invoice
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "TRNS\t\tINVOICE\t"
        (:invoice-date coll) "\t"
-       "Accounts Receivable\t"
+       (currency-and-client-to-accounts-receivable (:currency coll) (:client-name coll)) "\t"
        (:name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       (:address coll) "\t\t\n"))
+       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t\t\t"
+       "\t\t"
+       "\t\n"))
 
 
-(defn construct-iif-spl-for-contractor-invoice
+(defn construct-iif-spl-for-invoice
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "SPL\t\tINVOICE\t"
        (:invoice-date coll) "\t"
-       (:billing-department coll) "\t"
+       "\t"
        (:name coll) "\t\t"
        "-" (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       "\t\t\n"
+       (fee-type-and-client-to-quickbooks-item "MC" (:name coll)) "\t\n"
        "ENDTRNS\n\n"))
-
-(defn construct-iif-trns-for-nlc-invoice
-  "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
-  [coll]
-  (str "TRNS\t\tINVOICE\t"
-       (:invoice-date coll) "\t"
-       "Accounts Receivable\t"
-       (:nlc-name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       (:nlc-address coll) "\t\t\n"))
-
-
-(defn construct-iif-spl-for-nlc-invoice
-  "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
-  [coll]
-  (str "SPL\t\tINVOICE\t"
-       (:invoice-date coll) "\t"
-       (:billing-department coll) "\t"
-       (:nlc-name coll) "\t\t"
-       "-" (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       "\t\t\n"
-       "ENDTRNS\n\n"))
-
 
 ;; Master Functions -- CSV file gets parsed into a hashmap. That hashmap goes through validation
 ;; checks. Then, an iif file is constructed using that hashmap.
@@ -594,11 +616,11 @@
   "Given a reader, parse a csv file's contents, remove white speace, remove empty rows, vectorize, mappize, and return the final form (a hashmap)"
   [reader]
   (let [contents (into [] (doall (csv/read-csv reader)))
-        ws-removed (map remove-white-space contents)
-        empty-removed (remove empty? ws-removed)
-        vectorized (into [] empty-removed)
+        empty-strings-removed (map remove-empty contents)
+        empty-rows-removed (remove empty? empty-strings-removed)
+        vectorized (into [] empty-rows-removed)
         vector-of-rows (mapv row-to-map vectorized)
-        useful-rows (take-while (fn [z] (> (count z) 0)) vector-of-rows)
+        useful-rows (remove empty? vector-of-rows)
         final-form (into {} (into [] useful-rows))]
     final-form))
 
@@ -609,34 +631,17 @@
         internal-form (construct-map-from-pdf-contents contents)]
     internal-form))
 
-;; invoice-type? (:taxonomy-projects form)
 (defn internal-form-to-iif-writer
   "Given a writer and a form (hashmap), write using NLC format if the form has the appropriate key, write using Contr format otherwise."
   [writer form]
   (try
     (if (is-NLC? form)
       (.write writer (str (construct-iif-headers-for-bill)
-                          (nlc-construct-iif-trns form)
-                          (nlc-construct-iif-spl form)))
+                          (construct-iif-trns-for-nlc-bill form)
+                          (construct-iif-spl-for-nlc-bill form)))
       (.write writer (str (construct-iif-headers-for-bill)
-                          (contr-construct-iif-trns form)
-                          (contr-construct-iif-spl form))))
-    true
-    (catch Exception e
-      (println "Exception Error Writing")
-      false)))
-
-(defn internal-form-to-iif-writer-using-expenses-account
-  "Given a writer and a form (hashmap), write using NLC format if the form has the appropriate key, write using Contr format otherwise."
-  [writer form]
-  (try
-    (if (is-NLC? form)
-      (.write writer (str (construct-iif-headers-for-bill)
-                          (nlc-construct-iif-trns form)
-                          (nlc-construct-iif-spl-expenses-account form)))
-      (.write writer (str (construct-iif-headers-for-bill)
-                          (contr-construct-iif-trns form)
-                          (contr-construct-iif-spl-expenses-account form))))
+                          (construct-iif-trns-for-contractor-bill form)
+                          (construct-iif-spl-for-contractor-bill form))))
     true
     (catch Exception e
       (println "Exception Error Writing")
@@ -646,13 +651,10 @@
   "Given a writer and a form (hashmap), write using NLC format if the form has the appropriate key, write using Contr format otherwise."
   [writer form]
   (try
-    (if (is-NLC? form)
+    (if (is-Invoice? form)
       (.write writer (str (construct-iif-headers-for-invoice)
-                          (construct-iif-trns-for-nlc-invoice form)
-                          (construct-iif-spl-for-nlc-invoice form)))
-      (.write writer (str (construct-iif-headers-for-invoice)
-                          (construct-iif-trns-for-contractor-invoice form)
-                          (construct-iif-spl-for-contractor-invoice form))))
+                          (construct-iif-trns-for-invoice form)
+                          (construct-iif-spl-for-invoice form))))
     true
     (catch Exception e
       (println "Exception Error Writing")
@@ -662,19 +664,8 @@
   "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
   [pdf-filename writer]
   (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
-    (if-let [validated-if (validate-invoice internal-form)]
+    (if-let [validated-if (validate-transaction internal-form)]
       (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
-        true
-        (println "Writer failed"))
-      (println "Validation failed"))
-    (println "Parser Failed")))
-
-(defn pdf-filename-to-iif-writer-using-expenses-account
-  "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
-  [pdf-filename writer]
-  (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
-    (if-let [validated-if (validate-invoice internal-form)]
-      (if-let [constructed-iif (internal-form-to-iif-writer-using-expenses-account writer internal-form)]
         true
         (println "Writer failed"))
       (println "Validation failed"))
@@ -684,7 +675,7 @@
   "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
   [pdf-filename writer]
   (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
-    (if-let [validated-if (validate-invoice internal-form)]
+    (if-let [validated-if (validate-transaction internal-form)]
       (if-let [constructed-iif (internal-form-to-iif-writer-for-invoices writer internal-form)]
         true
         (println "Writer failed"))
@@ -697,20 +688,13 @@
   (with-open [w (io/writer iif-filename)]
     (pdf-filename-to-iif-writer pdf-filename w)))
 
+
 (defn pdf-dir-to-iif-file
   "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
   [pdf-dirname iif-filename]
   (with-open [w (io/writer iif-filename)]
     (run! (fn [pdf-filename] (with-open [r (io/reader (str pdf-dirname "/" pdf-filename))]
                                (pdf-filename-to-iif-writer (str pdf-dirname "/" pdf-filename) w)))
-          (list-filenames pdf-dirname))))
-
-(defn pdf-dir-to-iif-file-using-expenses-account
-  "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
-  [pdf-dirname iif-filename]
-  (with-open [w (io/writer iif-filename)]
-    (run! (fn [pdf-filename] (with-open [r (io/reader (str pdf-dirname "/" pdf-filename))]
-                               (pdf-filename-to-iif-writer-using-expenses-account (str pdf-dirname "/" pdf-filename) w)))
           (list-filenames pdf-dirname))))
 
 (defn pdf-dir-to-iif-file-for-invoices
@@ -725,7 +709,7 @@
   "Given a reader and a writer, convert from csv-reader to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
   [reader writer]
   (if-let [internal-form (csv-reader-to-internal-form reader)]
-      (if-let [validated-if (validate-invoice internal-form)]
+      (if-let [validated-if (validate-transaction internal-form)]
           (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
               true
               (println "Writer failed"))
@@ -747,9 +731,59 @@
                                (csv-reader-to-iif-writer r w)))
           (list-filenames csv-dirname))))
 
+(defn update-date
+  [form]
+  (if (= (date-format? (first (string/split (:begin-date form) #" "))) "MM/DD/YYYY")
+    (first (string/split (:begin-date form) #" "))
+    (:begin-date (assoc form :begin-date (string/replace (first (string/split (:begin-date form) #" ")) #"/" "-")))))
+
+(defn internal-form-to-invoice-form
+  [form]
+  (hash-map :total-due (:invoice-total form)
+            :name (:pricing-plan form)
+            :client-name (:client-name form)
+            :currency (:currency form)
+            :monthly-minimum-fee (:monthly-minimum-fee form)
+            :invoice-date (update-date form)))
+
+(defn invoice-to-internal-form
+  [csv-filename]
+  (let [contents (read-csv csv-filename)
+        added-client-name (conj contents ["Client Name" (find-client-name csv-filename)])
+        empty-strings-removed (map remove-empty added-client-name)
+        empty-rows-removed (remove empty? empty-strings-removed)
+        vectorized (into [] empty-rows-removed)
+        vector-of-rows (mapv row-to-map vectorized)
+        useful-rows (remove empty? vector-of-rows)
+        internal-form (into {} useful-rows)
+        invoice-form (internal-form-to-invoice-form internal-form)]
+    invoice-form))
+
+(defn invoice-filename-to-iif-writer
+  "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
+  [invoice-filename writer]
+  (if-let [internal-form (invoice-to-internal-form invoice-filename)]
+    (if-let [validated-if (validate-transaction internal-form)]
+      (if-let [constructed-iif (internal-form-to-iif-writer-for-invoices writer internal-form)]
+        true
+        (println "Writer failed"))
+      (println "Validation failed"))
+    (println "Parser Failed")))
+
+(defn invoice-dir-to-iif-file
+  "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
+  [invoice-dirname iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (run! (fn [invoice-filename] (with-open [r (io/reader (str invoice-dirname "/" invoice-filename))]
+                               (invoice-filename-to-iif-writer (str invoice-dirname "/" invoice-filename) w)))
+          (list-filenames invoice-dirname))))
+
 (comment
   (def x (read-pdf "nlc-pdf-invoice-example.pdf"))
   (new-find-nlc-name x)
+  (def pdf-dir "C:/Users/Steve/IdeaProjects/parse_csv/bills")
+  (def csv-dir "C:/Users/Steve/IdeaProjects/parse_csv/invoices")
+  (def test-file (first (list-filenames "C:/Users/Steve/IdeaProjects/parse_csv/invoices")))
   )
 
 
