@@ -5,6 +5,7 @@
             [clojure.string :as string]
             [clojure.walk :refer [postwalk]]
             [pdfboxing.text :as text]
+            [clojure.edn :as edn]
     ;; [java-time :as time]
     ))
 
@@ -117,6 +118,16 @@
   (string/trim (str (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 1)
                     (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 3))))
 
+(defn find-nlc-address1
+  "Given a string, find the NLC Address -- Only useful in the format found by extract/text of invoices"
+  [string]
+  (string/trim (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 1)))
+
+(defn find-nlc-address2
+  "Given a string, find the NLC Address -- Only useful in the format found by extract/text of invoices"
+  [string]
+  (string/trim (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 3)))
+
 (defn find-nlc-phone
   "Given a string, find the NLC Phone -- Only useful in the format found by extract/text of invoices"
   [string]
@@ -211,8 +222,43 @@
   (if (= (invoice-type? coll) "INV")
     true
     false))
+
+;; Hash-map for client-name as a key which gives the client-code to be used to generate an invoice number
+(def client-name-to-client-code
+  (hash-map :liturgicalpub "litpub"
+            :zipch "zipch"))
+
+(def client-name-to-last-invoice-number
+  (hash-map :liturgicalpub "FIRSTENTRY1"
+            :zipch "FIRSTENTRY1"))
+
+(defn last-invoice-number
+  []
+  (:last-invoice-number (edn/read-string (slurp "data.txt"))))
+
+(defn fresh-spit-to-file
+  []
+  (spit "data.txt" (pr-str (hash-map :last-invoice-number "ABC1"))))
+
+(defn spit-invoice-no-to-file
+  [coll]
+  (spit "data.txt" (pr-str (hash-map :last-invoice-number (:invoice-no coll)))))
+
+(defn unique-invoice-no?
+  "Given a collection, return true if current invoice number is not the same as the previously stored invoice number in data.txt"
+  [coll]
+  (not= (last-invoice-number) (:invoice-no coll)))
+
+(defn greater-invoice-no?
+  "Given a collection, return true if current invoice number is greater than the previously stored invoice number in data.txt"
+  [coll]
+  (>  (Long/parseLong (apply str (filter #(Character/isDigit %) (:invoice-no coll)))) (Long/parseLong (apply str (filter #(Character/isDigit %) (last-invoice-number))))))
+
 (defn generate-invoice-number
-  [year month client-key])
+  [year month client-key]
+  (if (= (count year) 4)
+    (str (subs year 2) month ((keyword client-key) client-name-to-client-code))
+    (str year month ((keyword client-key) client-name-to-client-code))))
 
 (defn construct-nlc-map-from-pdf-contents
   "Given a string (PDF contents), construct a NLC map using finder functions IF all necessary NLC keys are found"
@@ -220,6 +266,8 @@
   (if (nlc-keys? string)
     (let [internal-form (hash-map :nlc-name (find-nlc-name string)
                                   :nlc-address (find-nlc-address string)
+                                  :nlc-address1 (find-nlc-address1 string)
+                                  :nlc-address2 (find-nlc-address2 string)
                                   :nlc-phone (find-nlc-phone string)
                                   :invoice-no (find-invoice-no string)
                                   :invoice-date (find-invoice-date string)
@@ -262,10 +310,43 @@
 (defn date-format?
   [date]
   (let [split-date (string/split date #"[/-]")
-        date-format (if (= (count (first split-date)) 2)
+        date-format (if (or (= (count (first split-date)) 2) (= (count (first split-date)) 1) )
           "MM/DD/YYYY"
           "YYYY-MM-DD")]
     date-format))
+
+(defn get-year-given-date
+  [date]
+  (let [updated-date (if (= (date-format? date) "MM/DD/YYYY")
+                       date
+                       (string/replace date #"/" "-"))
+        split-date (string/split updated-date #"[/-]")
+        year (if (= (date-format? date) "MM/DD/YYYY")
+                (get split-date 2)
+                (get split-date 0))]
+    year))
+
+(defn get-month-given-date
+  [date]
+  (let [updated-date (if (= (date-format? date) "MM/DD/YYYY")
+                       date
+                       (string/replace date #"/" "-"))
+        split-date (string/split updated-date #"[/-]")
+        month (if (= (date-format? date) "MM/DD/YYYY")
+               (get split-date 0)
+               (get split-date 1))]
+    month))
+
+(defn get-day-given-date
+  [date]
+  (let [updated-date (if (= (date-format? date) "MM/DD/YYYY")
+                       date
+                       (string/replace date #"/" "-"))
+        split-date (string/split updated-date #"[/-]")
+        day (if (= (date-format? date) "MM/DD/YYYY")
+               (get split-date 1)
+               (get split-date 2))]
+    day))
 
 (defn validate-date
   "Given a collection, perform validation on the value associated with :invoice-date"
@@ -274,30 +355,28 @@
         updated-date (if (= (date-format? given-date) "MM/DD/YYYY")
                        given-date
                        (:invoice-date (assoc coll :invoice-date (string/replace (:invoice-date coll) #"/" "-"))))
-        split-date (string/split updated-date #"[/-]")
-        month (if (= (date-format? given-date) "MM/DD/YYYY")
-                (get split-date 0)
-                (get split-date 1))
-        day (if (= (date-format? given-date) "MM/DD/YYYY")
-              (get split-date 1)
-              (get split-date 2))
-        year (if (= (date-format? given-date) "MM/DD/YYYY")
-               (get split-date 2)
-               (get split-date 0))
+        month (get-month-given-date updated-date)
+        day (get-day-given-date updated-date)
+        year (get-year-given-date updated-date)
         validated-month (<= (Long/parseLong (clojure.string/replace month #"^0+" "")) 12)
         validated-day (<= (Long/parseLong (clojure.string/replace day #"^0+" "")) 31)
         validated-year (or (= (count year) 2) (= (count year) 4))
         validated-date (and validated-month validated-day validated-year)]
     validated-date))
 
+;;update-stored-invoice-no (if (and validate-greater-than validate-unique)
+;                                   (spit-invoice-no-to-file coll)
+;                                   (println "Invoice Number is either not unique or not greater than"))
 (defn validate-invoice-no
   "Given a collection, perform validation on the value associated with :invoice-no -- need to hold previous invoice no. in memory to check"
   [coll]
   (let [given-inv-no (:invoice-no coll)
         validated-char-lim (<= (count given-inv-no) 12)
         validated-no-space-test (not (string/includes? given-inv-no " "))
-        validate-no-alphabetic-suffix ()
-        validated-invoice-no (and validated-char-lim validated-no-space-test)]
+        validate-no-alphabetic-suffix (not (Character/isLetter (last given-inv-no)))
+        validate-unique (unique-invoice-no? coll)
+        validate-greater-than (greater-invoice-no? coll)
+        validated-invoice-no (and validated-char-lim validated-no-space-test validate-no-alphabetic-suffix validate-unique validate-greater-than)]
     validated-invoice-no))
 
 (def billing-department-to-quickbooks-account
@@ -337,7 +416,7 @@
                        :swedish_sweden "NLCs:Taxonomy Development:Non-English (dev):Swedish_Sweden:"}))
 
 (def accounts-receivable
-  {:liturgicalpub "Accounts Receivable-USD:zipch-A/R"
+  {:liturgicalpub "Accounts Receivable-USD:liturgicalpub-A/R"
    :zipch "Accounts Receivable-CHF:zipch-A/R"})
 
 ;;SEM, Setup, Development
@@ -523,7 +602,7 @@
 (defn construct-iif-headers-for-bill
   "Constructs the string that will be used as the headers in a properly formatted IIF file for Bills"
   []
-  (str "!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\tADDR1\tDUEDATE\tTERMS"
+  (str "!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tTOPRINT\tADDR1\tADDR2\tDUEDATE\tTERMS"
        "\n!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tCLASS\tAMOUNT\tDOCNUM\tMEMO\tCLEAR\tQNTY\tREIMBEXP\tSERVICEDATE"
        "\n!ENDTRNS\n"))
 
@@ -562,7 +641,8 @@
        (:nlc-name coll) "\t\t"
        (string/replace (:total-due coll) #"\$" "") "\t"
        (:invoice-no coll) "\t\t\t\t"
-       (:nlc-address coll) "\t\t\n"))
+       (:nlc-address1 coll) "\t"
+       (:nlc-address2 coll) "\t\n"))
 
 (defn construct-iif-spl-for-nlc-bill
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
@@ -590,10 +670,11 @@
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "TRNS\t\tINVOICE\t"
-       (:invoice-date coll) "\t"
+       (:end-date coll) "\t"
        (currency-and-client-to-accounts-receivable (:currency coll) (:client-name coll)) "\t"
        (:name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t\t\t"
+       (string/replace (:total-due coll) #"\$" "") "\t"
+       (:invoice-no coll) "\t\t\t\t\t\t"
        "\t\t"
        "\t\n"))
 
@@ -602,11 +683,11 @@
   "Given a collection, construct the string that will be used as the information in a properly formatted IIF file"
   [coll]
   (str "SPL\t\tINVOICE\t"
-       (:invoice-date coll) "\t"
-       "\t"
+       (:end-date coll) "\t"
+       (fee-type-and-client-to-quickbooks-account (:fee-type coll) (:client-name coll)) "\t"
        (:name coll) "\t\t"
        "-" (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
-       (fee-type-and-client-to-quickbooks-item "MC" (:name coll)) "\t\n"
+       (fee-type-and-client-to-quickbooks-item (:fee-type coll) (:name coll)) "\t\n"
        "ENDTRNS\n\n"))
 
 ;; Master Functions -- CSV file gets parsed into a hashmap. That hashmap goes through validation
@@ -731,11 +812,29 @@
                                (csv-reader-to-iif-writer r w)))
           (list-filenames csv-dirname))))
 
-(defn update-date
+(defn update-begin-date
   [form]
   (if (= (date-format? (first (string/split (:begin-date form) #" "))) "MM/DD/YYYY")
     (first (string/split (:begin-date form) #" "))
     (:begin-date (assoc form :begin-date (string/replace (first (string/split (:begin-date form) #" ")) #"/" "-")))))
+
+(defn update-reported-date
+  [form]
+  (if (= (date-format? (first (string/split (:report-generated form) #" "))) "MM/DD/YYYY")
+    (first (string/split (:report-generated form) #" "))
+    (:report-generated (assoc form :report-generated (string/replace (first (string/split (:report-generated form) #" ")) #"/" "-")))))
+
+(defn update-end-date
+  [form]
+  (if (= (date-format? (first (string/split (:end-date form) #" "))) "MM/DD/YYYY")
+    (first (string/split (:end-date form) #" "))
+    (:end-date (assoc form :end-date (string/replace (first (string/split (:end-date form) #" ")) #"/" "-")))))
+
+(defn update-fee-type
+  [form]
+  (if (:one-time-fee-credit-set-up-fee form)
+    "Setup"
+    "MC"))
 
 (defn internal-form-to-invoice-form
   [form]
@@ -744,7 +843,11 @@
             :client-name (:client-name form)
             :currency (:currency form)
             :monthly-minimum-fee (:monthly-minimum-fee form)
-            :invoice-date (update-date form)))
+            :invoice-date (update-begin-date form)
+            :end-date (update-end-date form)
+            :reported-date (update-reported-date form)
+            :fee-type (update-fee-type form)
+            :invoice-no (generate-invoice-number (get-year-given-date (update-begin-date form)) (get-month-given-date (update-begin-date form)) (:client-name form))))
 
 (defn invoice-to-internal-form
   [csv-filename]
