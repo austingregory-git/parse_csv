@@ -33,6 +33,15 @@
   [coll elm]
   (some #(= elm %) coll))
 
+(defn validize-total-due
+  "Given a value which represents a total amount "
+  [value]
+  (if (string/includes? value ",")
+    (if (< (count (subs value (inc (string/last-index-of value ",")))) 3)
+      (string/replace (string/replace value #"\$" "") #"," ".")
+      (string/replace value #"\$" ""))
+    (string/replace value #"\$" "")))
+
 (defn remove-empty
   "Given a row (of strings), remove all of the empty strings within the row"
   [row]
@@ -229,30 +238,113 @@
             :zipch "zipch"))
 
 (def client-name-to-last-invoice-number
-  (hash-map :liturgicalpub "FIRSTENTRY1"
-            :zipch "FIRSTENTRY1"))
+  (hash-map :liturgicalpub-last-invoice-number "FIRSTENTRY1"
+            :zipch-last-invoice-number "FIRSTENTRY1"))
 
-(defn last-invoice-number
+(def nlc-name-to-last-invoice-number
+  (hash-map :mira-scott-last-invoice-number "FIRSTENTRY1"
+            :eleonora-mazzanti-last-invoice-number "FIRSTENTRY1"))
+
+(def contractor-name-to-last-invoice-number
+  {})
+
+(def client-name-list
+  ["liturgicalpub" "zipch"])
+
+(def nlc-name-list
+  ["Mira Scott" "Eleonora Mazzanti"])
+
+(defn check-client-name-list
   []
-  (:last-invoice-number (edn/read-string (slurp "data.txt"))))
+  (edn/read-string (slurp "client-name-list.txt")))
+
+(defn check-nlc-name-list
+  []
+  (edn/read-string (slurp "nlc-name-list.txt")))
+
+(defn check-contractor-name-list
+  []
+  (edn/read-string (slurp "contractor-name-list.txt")))
+
+(defn name-to-key
+  [name]
+  (keywordize-string (str name "-last-invoice-number")))
+
+(defn client-to-new-entry
+  [coll]
+  (if (is-Invoice? coll)
+    {(name-to-key (:client-name coll)) "FIRSTENTRY1"}
+    (if (is-NLC? coll)
+      {(name-to-key (:nlc-name coll)) "FIRSTENTRY1"}
+      (if (is-Contractor? coll)
+        {(name-to-key (:name coll)) "FIRSTENTRY1"}
+        (println "Error -- no transaction type found")))))
+
+
+(defn update-name-list
+  [coll]
+  (if (is-NLC? coll)
+    (if (in? (check-nlc-name-list) (:nlc-name coll))
+      "Name already exists"
+      (spit "nlc-name-list.txt" (conj (check-nlc-name-list) (:nlc-name coll))))
+    (if (is-Contractor? coll)
+      (if (in? (check-contractor-name-list) (:name coll))
+        "Name already exists"
+        (spit "contractor-name-list.txt" (conj (check-contractor-name-list) (:nlc-name coll))))
+      (if (is-Invoice? coll)
+        (if (in? (check-client-name-list) (:client-name coll))
+          "Name already exists"
+          (spit "client-name-list.txt" (conj (check-client-name-list) (:client-name coll))))
+        "Error - no transaction type found"))))
+
+(defn last-invoice-number-of-current-client
+  [coll]
+  (if (is-Invoice? coll)
+    ((name-to-key (:client-name coll)) (edn/read-string (slurp "data.txt")))
+    (if (is-NLC? coll)
+      ((name-to-key (:nlc-name coll)) (edn/read-string (slurp "data.txt")))
+      (if (is-Contractor? coll)
+        ((name-to-key (:name coll)) (edn/read-string (slurp "data.txt")))
+        (println "Error -- no transaction type found")))))
+
+(defn current-client-to-invoice-no-map
+  []
+  (edn/read-string (slurp "data.txt")))
+
+(defn add-client-to-invoice-no-map
+  "Given a collection, add a new entry to the invoice no. map found in data.txt with the base value FIRSTENTRY1"
+  [coll]
+  (if (is-Invoice? coll)
+    (spit "data.txt" (pr-str (conj (current-client-to-invoice-no-map) (client-to-new-entry coll))))
+    (if (is-NLC? coll)
+      (spit "data.txt" (pr-str (conj (current-client-to-invoice-no-map) (client-to-new-entry coll))))
+      (if (is-Contractor? coll)
+        (spit "data.txt" (pr-str (conj (current-client-to-invoice-no-map) (client-to-new-entry coll))))
+        (println "Error -- no transaction type found")))))
 
 (defn fresh-spit-to-file
   []
-  (spit "data.txt" (pr-str (hash-map :last-invoice-number "ABC1"))))
+  (spit "data.txt" (pr-str (merge client-name-to-last-invoice-number nlc-name-to-last-invoice-number contractor-name-to-last-invoice-number))))
 
-(defn spit-invoice-no-to-file
+(defn update-invoice-no-to-file
   [coll]
-  (spit "data.txt" (pr-str (hash-map :last-invoice-number (:invoice-no coll)))))
+  (if (is-Invoice? coll)
+    (spit "data.txt" (pr-str (assoc (current-client-to-invoice-no-map) (name-to-key (:client-name coll)) (:invoice-no coll))))
+    (if (is-NLC? coll)
+      (spit "data.txt" (pr-str (assoc (current-client-to-invoice-no-map) (name-to-key (:nlc-name coll)) (:invoice-no coll))))
+      (if (is-Contractor? coll)
+        (spit "data.txt" (pr-str (assoc (current-client-to-invoice-no-map) (name-to-key (:name coll)) (:invoice-no coll))))
+        (println "Error -- no transaction type found")))))
 
 (defn unique-invoice-no?
   "Given a collection, return true if current invoice number is not the same as the previously stored invoice number in data.txt"
   [coll]
-  (not= (last-invoice-number) (:invoice-no coll)))
+  (not= (last-invoice-number-of-current-client coll) (:invoice-no coll)))
 
 (defn greater-invoice-no?
   "Given a collection, return true if current invoice number is greater than the previously stored invoice number in data.txt"
   [coll]
-  (>  (Long/parseLong (apply str (filter #(Character/isDigit %) (:invoice-no coll)))) (Long/parseLong (apply str (filter #(Character/isDigit %) (last-invoice-number))))))
+  (>  (Long/parseLong (apply str (filter #(Character/isDigit %) (:invoice-no coll)))) (Long/parseLong (apply str (filter #(Character/isDigit %) (last-invoice-number-of-current-client coll))))))
 
 (defn generate-invoice-number
   [year month client-key]
@@ -373,24 +465,26 @@
   (let [given-inv-no (:invoice-no coll)
         validated-char-lim (<= (count given-inv-no) 12)
         validated-no-space-test (not (string/includes? given-inv-no " "))
-        validate-no-alphabetic-suffix (not (Character/isLetter (last given-inv-no)))
+        validate-no-alphabetic-suffix (if (is-Invoice? coll)
+                                        true
+                                        (not (Character/isLetter (last given-inv-no))))
         validate-unique (unique-invoice-no? coll)
         validate-greater-than (greater-invoice-no? coll)
         validated-invoice-no (and validated-char-lim validated-no-space-test validate-no-alphabetic-suffix validate-unique validate-greater-than)]
     validated-invoice-no))
 
 (def billing-department-to-quickbooks-account
-  (hash-map :bd "BD:BD Expenses"
-            :r&d "R&D:R&D Expenses"
-            :engineering "Engineering:Engineering Expenses"
-            :product "Product:Product Expenses"
-            :marketing "Marketing:Marketing Expenses"
-            :client-engagement "Client Engagement:Client Engagement Expenses"
-            :finance "Finance:Finance Expenses"
-            :people&culture "People & Culture:People & Culture Expenses"
-            :corp-it "Corp IT:Corp IT Expenses"
-            :corporate "Corporate:Corporate Expenses"
-            :taxonomy-projects {:special-projects "Outside Services:Taxonomy Other"
+  (hash-map :bd "Outside Services:General Consulting"
+            :r&d "Outside Services:R&D"
+            :engineering "Outside Services:Engineering"
+            :product "Outside Services:Engineering"
+            :marketing "Outside Services:Marketing"
+            :client-engagement "Outside Services:Client Services"
+            :finance "Outside Services:General Consulting"
+            :people&culture "Outside Services:General Consulting"
+            :corp-it "Outside Services:General Consulting"
+            :corporate "Outside Services:General Consulting"
+            :taxonomy-projects {:special-projects "Outside Services:Taxonomy-Other"
                        :danish_denmark "NLCs:Taxonomy Development:Non-English (dev):Danish_Denmark:"
                        :dutch_netherlands "NLCs:Taxonomy Development:Non-English (dev):Dutch_Netherlands:"
                        :english_australia "NLCs:Taxonomy Development:English (dev):English_Australia:"
@@ -580,7 +674,10 @@
   (println "Validation for invoice:" (:name coll))
   (println "Name:" (validate-contr-name coll))
   (println "Date:" (validate-date coll))
-  (and (validate-contr-name coll) (validate-date coll)))
+  (println "Invoice No:" (validate-invoice-no coll))
+  (and (validate-contr-name coll)
+       (validate-date coll)
+       (validate-invoice-no coll)))
 
 (defn validate-transaction
   "Given a form (hashmap), validate-nlc-invoice if the form has the appropriate key, and validate-contr-invoice otherwise"
@@ -614,7 +711,7 @@
        (:invoice-date coll) "\t"
        "Accounts Payable\t"
        (:name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t"
+       "-" (validize-total-due (:total-due coll)) "\t"
        (:invoice-no coll) "\t\t\t\t"
        (:address coll) "\t\t\n"))
 
@@ -625,7 +722,7 @@
        (:invoice-date coll) "\t"
        ((keywordize-string (:billing-department coll)) billing-department-to-quickbooks-account) "\t"
        "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
+       (validize-total-due (:total-due coll)) "\t\t\t\t\t"
        "\t\t\n"
        "ENDTRNS\n\n"))
 
@@ -639,7 +736,7 @@
        (:invoice-date coll) "\t"
        "Accounts Payable" "\t"
        (:nlc-name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t"
+       "-" (validize-total-due (:total-due coll)) "\t"
        (:invoice-no coll) "\t\t\t\t"
        (:nlc-address1 coll) "\t"
        (:nlc-address2 coll) "\t\n"))
@@ -673,7 +770,7 @@
        (:end-date coll) "\t"
        (currency-and-client-to-accounts-receivable (:currency coll) (:client-name coll)) "\t"
        (:name coll) "\t\t"
-       (string/replace (:total-due coll) #"\$" "") "\t"
+       (validize-total-due (:total-due coll)) "\t"
        (:invoice-no coll) "\t\t\t\t\t\t"
        "\t\t"
        "\t\n"))
@@ -686,7 +783,7 @@
        (:end-date coll) "\t"
        (fee-type-and-client-to-quickbooks-account (:fee-type coll) (:client-name coll)) "\t"
        (:name coll) "\t\t"
-       "-" (string/replace (:total-due coll) #"\$" "") "\t\t\t\t\t"
+       "-" (validize-total-due (:total-due coll)) "\t\t\t\t\t"
        (fee-type-and-client-to-quickbooks-item (:fee-type coll) (:name coll)) "\t\n"
        "ENDTRNS\n\n"))
 
@@ -745,9 +842,9 @@
   "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
   [pdf-filename writer]
   (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
-    (if-let [validated-if (validate-transaction internal-form)]
+    (if-let [validated-if (do (add-client-to-invoice-no-map internal-form) (validate-transaction internal-form))]
       (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
-        true
+        (update-invoice-no-to-file internal-form)
         (println "Writer failed"))
       (println "Validation failed"))
     (println "Parser Failed")))
@@ -756,9 +853,9 @@
   "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
   [pdf-filename writer]
   (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
-    (if-let [validated-if (validate-transaction internal-form)]
+    (if-let [validated-if (do (add-client-to-invoice-no-map internal-form) (validate-transaction internal-form))]
       (if-let [constructed-iif (internal-form-to-iif-writer-for-invoices writer internal-form)]
-        true
+        (update-invoice-no-to-file internal-form)
         (println "Writer failed"))
       (println "Validation failed"))
     (println "Parser Failed")))
@@ -866,9 +963,9 @@
   "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
   [invoice-filename writer]
   (if-let [internal-form (invoice-to-internal-form invoice-filename)]
-    (if-let [validated-if (validate-transaction internal-form)]
+    (if-let [validated-if (do (add-client-to-invoice-no-map internal-form) (validate-transaction internal-form))]
       (if-let [constructed-iif (internal-form-to-iif-writer-for-invoices writer internal-form)]
-        true
+        (update-invoice-no-to-file internal-form)
         (println "Writer failed"))
       (println "Validation failed"))
     (println "Parser Failed")))
@@ -886,7 +983,7 @@
   (new-find-nlc-name x)
   (def pdf-dir "C:/Users/Steve/IdeaProjects/parse_csv/bills")
   (def csv-dir "C:/Users/Steve/IdeaProjects/parse_csv/invoices")
-  (def test-file (first (list-filenames "C:/Users/Steve/IdeaProjects/parse_csv/invoices")))
+  (def test-file (str csv-dir "/" (first (list-filenames "C:/Users/Steve/IdeaProjects/parse_csv/invoices"))))
   )
 
 
