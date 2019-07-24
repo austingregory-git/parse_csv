@@ -1,3 +1,26 @@
+; Author: Austin Gregory with supervision/assistance from Dorab
+; Software Consultant Intern Project --
+; Automation of invoice/bill validation and IIF construction for importing into quickbooks for MatchCraft
+; How to use:
+; The master function used for bills (NLC/Contractor invoices--quickbooks considers these bills) is pdf-dir-to-iif-filename
+; By calling this function and giving it a directory name which contains bills (in PDF format), and an output filename,
+; The function will parse each file in the directory and convert it to an internal form, perform validation checks, will inform the user
+; on the validation process, and if reading and validation succeeds, it will write to the given output file in IIF format
+; so that it can be imported to quickbooks.
+; To import into all bills into quickbooks, all you need is the iif file.
+; In quickbooks, go to (File->Utilities->Import->IIF Files...) and select the iif file to import.
+; Duplicate transactions are allowed into quickbooks, so be warned! You can use the old import method (at the bottom of the IIF file import window labeled import without review -- it has more reviewing than the other one...),
+; which is better at warning you about duplication, but upon import fails to use the associated account to populate useful fields (Terms, Addresses, etc).
+; Bills will populate
+; ---
+; The master function used for invoices (client invoices) is invoice-dir-to-iif-file
+; By calling this function and giving it a directory name which contains invoices (in CSV format), and an output filename,
+; The function will parse each file in the directory and convert it to an internal form, perform validation checks, will inform the user
+; on the validation process, and if reading and validation succeeds, it will write to the given output file in IIF format
+; Importation to quickbooks is the same as above.
+
+
+
 (ns parse-csv.core
   (:require [clojure.java.io :as io]
             [clojure.data.csv :as csv]
@@ -5,11 +28,97 @@
             [clojure.string :as string]
             [clojure.walk :refer [postwalk]]
             [pdfboxing.text :as text]
-            [clojure.edn :as edn]
-    ;; [java-time :as time]
-    ))
+            [clojure.edn :as edn]))
+
+;;"variables"
+
+(def billing-department-to-quickbooks-account
+  (hash-map :bd "Outside Services:General Consulting"
+            :r&d "Outside Services:R&D"
+            :engineering "Outside Services:Engineering"
+            :product "Outside Services:Engineering"
+            :marketing "Outside Services:Marketing"
+            :client-engagement "Outside Services:Client Services"
+            :finance "Outside Services:General Consulting"
+            :people&culture "Outside Services:General Consulting"
+            :corp-it "Outside Services:General Consulting"
+            :corporate "Outside Services:General Consulting"
+            :taxonomy-projects {:special-projects "Outside Services:Taxonomy-Other"
+                                :danish_denmark "NLCs:Taxonomy Development:Non-English (dev):Danish_Denmark:"
+                                :dutch_netherlands "NLCs:Taxonomy Development:Non-English (dev):Dutch_Netherlands:"
+                                :english_australia "NLCs:Taxonomy Development:English (dev):English_Australia:"
+                                :english_uk "NLCs:Taxonomy Development:English (dev):English_UK:"
+                                :english_us "NLCs:Taxonomy Development:English (dev):English_US:"
+                                :english_us_spanish_mexico "NLCs:Taxonomy Development:English (dev):English_US_Spanish_Mexico:"
+                                :finnish_finland "NLCs:Taxonomy Development:Non-English (dev):Finnish_Finland:"
+                                :flemish_belgium "NLCs:Taxonomy Development:Non-English (dev):Flemish_Belgium:"
+                                :french_canada "NLCs:Taxonomy Development:Non-English (dev):French_Canada:"
+                                :french_belgium "NLCs:Taxonomy Development:Non-English (dev):French_Belgium:"
+                                :french_france "NLCs:Taxonomy Development:Non-English (dev):French_France:"
+                                :german_germany "NLCs:Taxonomy Development:Non-English (dev):German_Germany:"
+                                :iol_italy "NLCs:Taxonomy Development:Non-English (dev):IOL_Italy (fka seat):"
+                                :italian_italy "NLCs:Taxonomy Development:Non-English (dev):Italian_Italy:"
+                                :norwegian_norway "NLCs:Taxonomy Development:Non-English (dev):Norwegian_Norway:"
+                                :paginas_budg_portuguese_portugal "NLCs:Taxonomy Development:Non-English (dev):Paginas_Budg_Portuguese_Portugal:"
+                                :portuguese_brazil "NLCs:Taxonomy Development:Non-English (dev):Portuguese_Brazil:"
+                                :spanish_argentina "NLCs:Taxonomy Development:Non-English (dev):Spanish_Argentina:"
+                                :spanish_colombia "NLCs:Taxonomy Development:Non-English (dev):Spanish_Colombia:"
+                                :spanish_latin_america "NLCs:Taxonomy Development:Non-English (dev):Spanish_Latin_America:"
+                                :spanish_mexico "NLCs:Taxonomy Development:Non-English (dev):Spanish_Mexico:"
+                                :spanish_spain "NLCs:Taxonomy Development:Non-English (dev):Spanish_Spain:"
+                                :swedish_sweden "NLCs:Taxonomy Development:Non-English (dev):Swedish_Sweden:"}))
+
+;;this is automatically done in code using client-name, but if the "manual" hash-map is needed, here it is!
+(def client-name-to-accounts-receivable
+  {:liturgicalpub "Accounts Receivable-USD:liturgicalpub-A/R"
+   :zipch "Accounts Receivable-CHF:zipch-A/R"})
+
+(def required-nlc-fields
+  ["NLC Name" "NLC Address" "NLC Phone" "Taxonomy/Projects" "Billing Department" "Amount Total"])
+
+(def required-contractor-fields
+  ["Name" "Address" "Phone" "Billing Department" "Total Due"])
+
+(def optional-nlc-fields
+  [])
+
+(def optional-contractor-fields
+  [])
+
+(def nlc-invoice-fields
+  (into [] (concat required-nlc-fields optional-nlc-fields)))
+
+(def contractor-invoice-fields
+  (into [] (concat required-contractor-fields optional-contractor-fields)))
+
+;; Base hash-map for client-name as a key which gives the client-code to be used to generate an invoice number
+(def client-name-to-client-code
+  (hash-map :liturgicalpub "litpub"
+            :zipch "zipch"))
+
+;; Base hash-maps used to manually populate data.txt, but this is really only used for testing, as data.txt can be populated automatically
+(def client-name-to-last-invoice-number
+  (hash-map :liturgicalpub-last-invoice-number "FIRSTENTRY1"
+            :zipch-last-invoice-number "FIRSTENTRY1"))
+
+(def nlc-name-to-last-invoice-number
+  (hash-map :mira-scott-last-invoice-number "FIRSTENTRY1"
+            :eleonora-mazzanti-last-invoice-number "FIRSTENTRY1"))
+
+(def contractor-name-to-last-invoice-number
+  {})
+
+(def client-name-list
+  ["liturgicalpub" "zipch"])
+
+(def nlc-name-list
+  ["Mira Scott" "Eleonora Mazzanti"])
+
+(def transaction-types
+  ["BILL" "INVOICE"])
 
 
+;;parsing functions
 
 (defn read-csv
   "Given a csv filename, read CSV file's contents into a vector of strings"
@@ -23,18 +132,20 @@
   [filename]
   (text/extract filename))
 
+;;helper functions
+
 (defn list-filenames
   "Given a filepath, list all file names of the given directory"
   [path]
   (seq (.list (clojure.java.io/file path))))
 
 (defn in?
-  "true if coll contains elm"
+  "Given a collection and an element, give true if the collection contains that element"
   [coll elm]
   (some #(= elm %) coll))
 
 (defn validize-total-due
-  "Given a value which represents a total amount "
+  "Given a value which represents a total amount, convert it to a format that can be validated"
   [value]
   (if (string/includes? value ",")
     (if (< (count (subs value (inc (string/last-index-of value ",")))) 3)
@@ -48,47 +159,44 @@
   (into [] (remove (fn [z]
                      (= (count z) 0)) row)))
 
-;;convert-to-key-format
-(defn replace-bad-with-dash
+(defn convert-to-key-format
   "Given a string, replace all that is deemed bad with a dash (:, \\, /, ws) -> -"
-  [string]
-  (clojure.string/replace (clojure.string/replace string #":" "") #"[/\ +]" "-"))
+  [s]
+  (clojure.string/replace (clojure.string/replace s #":" "") #"[/\ +]" "-"))
 
-;;keywordize-map-keys
-(defn keywordize
+(defn keywordize-map-keys
   "Given a 'map', create key-value pairs and put them into a map."
   [m]
   (let [f (fn [[key val]]
             (if (string? key)
-              [(keyword (string/lower-case (replace-bad-with-dash key))) val]
+              [(keyword (string/lower-case (convert-to-key-format key))) val]
               [key val]))]
     (postwalk (fn [x] (if (map? x) (into {} (map f x)) x))
               m)))
 
 (defn keywordize-string
-  "Given a string, convert that string into a key with no bad characters"
-  [string]
-  (keyword (string/lower-case (replace-bad-with-dash string))))
-
-(def required-nlc-fields
-  ["NLC Name" "NLC Address" "NLC Phone" "Taxonomy/Projects" "Billing Department" "Amount Total"])
-
-(def required-contractor-fields
-  ["Name" "Address" "Phone" "Billing Department" "Total Due"])
+  "Given a string, convert that string into proper key format"
+  [s]
+  (keyword (string/lower-case (convert-to-key-format s))))
 
 (defn nlc-keys?
   "Given a string (pdf contents), return true if it contains each key (nlc keys) that will be needed to construct an IIF, false otherwise"
-  [string]
-  (every? identity (map (fn [field] (string/includes? string field)) required-nlc-fields)))
+  [s]
+  (every? identity (map (fn [field] (string/includes? s field)) required-nlc-fields)))
 
 (defn contractor-keys?
   "Given a string (pdf contents), return true if it contains each key (contractor keys) that will be needed to construct an IIF, false otherwise"
-  [string]
-  (every? identity (map (fn [field] (string/includes? string field)) required-contractor-fields)))
+  [s]
+  (every? identity (map (fn [field] (string/includes? s field)) required-contractor-fields)))
 
 (defn includes-all-in?
-  [required-fields string]
-  (every? identity (map (fn [field] (string/includes? string field)) required-fields)))
+  "Given required-fields and a string, check that the string includes all of the required-fields"
+  [required-fields s]
+  (every? identity (map (fn [field] (string/includes? s field)) required-fields)))
+
+(defn name-to-key
+  [name]
+  (keywordize-string (str name "-last-invoice-number")))
 
 (defn row-to-map
   "Given a row (of strings), convert it into a map by partitioning the row, vectorizing it, mapping it, and keywordizing it"
@@ -96,7 +204,7 @@
   (let [paired-row (partition 2 row)
         vectorized-pairs (map vec paired-row)
         mapped-pairs (into {} vectorized-pairs)
-        keywordized-mapped-pairs (keywordize mapped-pairs)]
+        keywordized-mapped-pairs (keywordize-map-keys mapped-pairs)]
     keywordized-mapped-pairs))
 
 (defn parse-csv-to-if
@@ -111,6 +219,8 @@
         final-form (into {} useful-rows)]
     final-form))
 
+;;finder/getter/checker functions
+
 (defn find-x-given-regex-and-string
   "Given a string and a regex, find the information indicated by the regex -- Only useful in the format found by extract/text of invoices"
   [regex string]
@@ -124,8 +234,10 @@
 (defn find-nlc-address
   "Given a string, find the NLC Address -- Only useful in the format found by extract/text of invoices"
   [string]
-  (string/trim (str (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 1)
-                    (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 3))))
+  (try
+    (string/trim (str (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 1)
+                         (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 3)))
+    (catch Exception e (str "Only one line of address found--" (.getMessage e)))))
 
 (defn find-nlc-address1
   "Given a string, find the NLC Address -- Only useful in the format found by extract/text of invoices"
@@ -135,7 +247,9 @@
 (defn find-nlc-address2
   "Given a string, find the NLC Address -- Only useful in the format found by extract/text of invoices"
   [string]
-  (string/trim (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 3)))
+  (try
+    (string/trim (get (first (re-seq #"NLC Address:(.*)Invoice Date:(.*)\r\n(.*)\r" string)) 3))
+    (catch Exception e (str "Second line of address not found--" (.getMessage e)))))
 
 (defn find-nlc-phone
   "Given a string, find the NLC Phone -- Only useful in the format found by extract/text of invoices"
@@ -191,22 +305,12 @@
   (find-x-given-regex-and-string #"Amount Total:(.*)\r" string))
 
 (defn find-client-name
+  "Given a filename, extract the client-name from the filename -- Only useful in the client invoice file format"
   [filename]
   (find-x-given-regex-and-string #"billing-report-(.*)-2" filename))
 
-
-(defn convert-billing-dept-to-account-name-for-iif
-  "Given a string (representing a value in a map, convert to a valid account name used in IIF format"
-  [string]
-  (str string ":" string " Expenses"))
-
-(def optional-nlc-fields
-  [])
-
-(def nlc-invoice-fields
-  (into [] (concat required-nlc-fields optional-nlc-fields)))
-
-(defn invoice-type?
+(defn find-invoice-type
+  "given a collection, find the invoice type of the collection by checking for the existence of certain fields"
   [coll]
   (if (or (string/includes? coll "Taxonomy/Projects") (:taxonomy-projects coll))
     "NLC"
@@ -215,62 +319,124 @@
       "Contractor")))
 
  (defn is-NLC?
+   "Given a collection, return true if the invoice type of the collection is NLC"
    [coll]
-   (if (= (invoice-type? coll) "NLC")
+   (if (= (find-invoice-type coll) "NLC")
      true
      false))
 
 (defn is-Contractor?
+  "Given a collection, return true if the invoice type of the collection is Contractor"
   [coll]
-  (if (= (invoice-type? coll) "Contractor")
+  (if (= (find-invoice-type coll) "Contractor")
     true
     false))
 
 (defn is-Invoice?
+  "Given a collection, return true if the invoice type of the collection is INV"
   [coll]
-  (if (= (invoice-type? coll) "INV")
+  (if (= (find-invoice-type coll) "INV")
     true
     false))
 
-;; Hash-map for client-name as a key which gives the client-code to be used to generate an invoice number
-(def client-name-to-client-code
-  (hash-map :liturgicalpub "litpub"
-            :zipch "zipch"))
-
-(def client-name-to-last-invoice-number
-  (hash-map :liturgicalpub-last-invoice-number "FIRSTENTRY1"
-            :zipch-last-invoice-number "FIRSTENTRY1"))
-
-(def nlc-name-to-last-invoice-number
-  (hash-map :mira-scott-last-invoice-number "FIRSTENTRY1"
-            :eleonora-mazzanti-last-invoice-number "FIRSTENTRY1"))
-
-(def contractor-name-to-last-invoice-number
-  {})
-
-(def client-name-list
-  ["liturgicalpub" "zipch"])
-
-(def nlc-name-list
-  ["Mira Scott" "Eleonora Mazzanti"])
-
 (defn check-client-name-list
+  "Return the contents (vector) found in client-name-list.txt"
   []
   (edn/read-string (slurp "client-name-list.txt")))
 
 (defn check-nlc-name-list
+  "Return the contents (vector) found in nlc-name-list.txt"
   []
   (edn/read-string (slurp "nlc-name-list.txt")))
 
 (defn check-contractor-name-list
+  "Return the contents (vector) found in contractor-name-list.txt"
   []
   (edn/read-string (slurp "contractor-name-list.txt")))
 
-(defn name-to-key
-  [name]
-  (keywordize-string (str name "-last-invoice-number")))
+(defn find-date-format
+  "Given a date, determines the date-format of the date -- MM/DD/YYYY or YYYY-MM-DD -- these are the acceptable date formats for IIF"
+  [date]
+  (let [split-date (string/split date #"[/-]")
+        date-format (if (or (= (count (first split-date)) 2) (= (count (first split-date)) 1) )
+                      "MM/DD/YYYY"
+                      "YYYY-MM-DD")]
+    date-format))
+
+(defn get-year-given-date
+  "Given a date, find the year"
+  [date]
+  (let [updated-date (if (= (find-date-format date) "MM/DD/YYYY")
+                       date
+                       (string/replace date #"/" "-"))
+        split-date (string/split updated-date #"[/-]")
+        year (if (= (find-date-format date) "MM/DD/YYYY")
+               (get split-date 2)
+               (get split-date 0))]
+    year))
+
+(defn get-month-given-date
+  "Given a date, find the month"
+  [date]
+  (let [updated-date (if (= (find-date-format date) "MM/DD/YYYY")
+                       date
+                       (string/replace date #"/" "-"))
+        split-date (string/split updated-date #"[/-]")
+        month (if (= (find-date-format date) "MM/DD/YYYY")
+                (get split-date 0)
+                (get split-date 1))]
+    month))
+
+(defn get-day-given-date
+  "Given a date, find the day"
+  [date]
+  (let [updated-date (if (= (find-date-format date) "MM/DD/YYYY")
+                       date
+                       (string/replace date #"/" "-"))
+        split-date (string/split updated-date #"[/-]")
+        day (if (= (find-date-format date) "MM/DD/YYYY")
+              (get split-date 1)
+              (get split-date 2))]
+    day))
+
+(defn update-begin-date
+  [form]
+  (if (= (find-date-format (first (string/split (:begin-date form) #" "))) "MM/DD/YYYY")
+    (first (string/split (:begin-date form) #" "))
+    (:begin-date (assoc form :begin-date (string/replace (first (string/split (:begin-date form) #" ")) #"/" "-")))))
+
+(defn update-reported-date
+  [form]
+  (if (= (find-date-format (first (string/split (:report-generated form) #" "))) "MM/DD/YYYY")
+    (first (string/split (:report-generated form) #" "))
+    (:report-generated (assoc form :report-generated (string/replace (first (string/split (:report-generated form) #" ")) #"/" "-")))))
+
+(defn update-end-date
+  [form]
+  (if (= (find-date-format (first (string/split (:end-date form) #" "))) "MM/DD/YYYY")
+    (first (string/split (:end-date form) #" "))
+    (:end-date (assoc form :end-date (string/replace (first (string/split (:end-date form) #" ")) #"/" "-")))))
+
+(defn update-fee-type
+  [form]
+  (if (:one-time-fee-credit-set-up-fee form)
+    "Setup"
+    "MC"))
+
+(defn coll-to-key
+  [coll]
+  (if (is-Invoice? coll)
+    (name-to-key (:client-name coll))
+    (if (is-NLC? coll)
+      (name-to-key (:nlc-name coll))
+      (if (is-Contractor? coll)
+        (name-to-key (:name coll))
+        (println "Error -- no transaction type found")))))
+
+;;functions to store, retrieve, and manipulate info from data
 
 (defn client-to-new-entry
+  "Given a collection (client, employee, contractor), create a new entry to be stored in data.txt (this part is done in add-client-to-invoice-no-map)"
   [coll]
   (if (is-Invoice? coll)
     {(name-to-key (:client-name coll)) "FIRSTENTRY1"}
@@ -280,8 +446,8 @@
         {(name-to-key (:name coll)) "FIRSTENTRY1"}
         (println "Error -- no transaction type found")))))
 
-
 (defn update-name-list
+  "Given a collection (a client), update the appropriate name-list (client-name-list.txt, nlc-name-list.txt, contractor-name-list.txt), by adding the current client's name if it does not already exist in the appropriate file"
   [coll]
   (if (is-NLC? coll)
     (if (in? (check-nlc-name-list) (:nlc-name coll))
@@ -298,6 +464,7 @@
         "Error - no transaction type found"))))
 
 (defn last-invoice-number-of-current-client
+  "Given a collection (a client), find the last invoice number of that client from data.txt"
   [coll]
   (if (is-Invoice? coll)
     ((name-to-key (:client-name coll)) (edn/read-string (slurp "data.txt")))
@@ -308,25 +475,24 @@
         (println "Error -- no transaction type found")))))
 
 (defn current-client-to-invoice-no-map
+  "Return the current map of client's previous invoice number map from data.txt"
   []
   (edn/read-string (slurp "data.txt")))
 
 (defn add-client-to-invoice-no-map
   "Given a collection, add a new entry to the invoice no. map found in data.txt with the base value FIRSTENTRY1"
   [coll]
-  (if (is-Invoice? coll)
+  (if (not ((coll-to-key coll) (current-client-to-invoice-no-map)))
     (spit "data.txt" (pr-str (conj (current-client-to-invoice-no-map) (client-to-new-entry coll))))
-    (if (is-NLC? coll)
-      (spit "data.txt" (pr-str (conj (current-client-to-invoice-no-map) (client-to-new-entry coll))))
-      (if (is-Contractor? coll)
-        (spit "data.txt" (pr-str (conj (current-client-to-invoice-no-map) (client-to-new-entry coll))))
-        (println "Error -- no transaction type found")))))
+    "Client already exists in data.txt"))
 
 (defn fresh-spit-to-file
+  "Spit the base hash-maps to data.txt -- used for testing, do this in-between tests of the same invoices/bills to avoid non-unique invoice numbers"
   []
   (spit "data.txt" (pr-str (merge client-name-to-last-invoice-number nlc-name-to-last-invoice-number contractor-name-to-last-invoice-number))))
 
 (defn update-invoice-no-to-file
+  "Given a collection (invoice or bill), update the appropriate key in the hash-map located in data.txt with the current invoice number"
   [coll]
   (if (is-Invoice? coll)
     (spit "data.txt" (pr-str (assoc (current-client-to-invoice-no-map) (name-to-key (:client-name coll)) (:invoice-no coll))))
@@ -336,17 +502,8 @@
         (spit "data.txt" (pr-str (assoc (current-client-to-invoice-no-map) (name-to-key (:name coll)) (:invoice-no coll))))
         (println "Error -- no transaction type found")))))
 
-(defn unique-invoice-no?
-  "Given a collection, return true if current invoice number is not the same as the previously stored invoice number in data.txt"
-  [coll]
-  (not= (last-invoice-number-of-current-client coll) (:invoice-no coll)))
-
-(defn greater-invoice-no?
-  "Given a collection, return true if current invoice number is greater than the previously stored invoice number in data.txt"
-  [coll]
-  (>  (Long/parseLong (apply str (filter #(Character/isDigit %) (:invoice-no coll)))) (Long/parseLong (apply str (filter #(Character/isDigit %) (last-invoice-number-of-current-client coll))))))
-
 (defn generate-invoice-number
+  "Given a year (YYYY or YY), a month (MM), and a client-key, generate an invoice number in the format YYMMClient-code"
   [year month client-key]
   (if (= (count year) 4)
     (str (subs year 2) month ((keyword client-key) client-name-to-client-code))
@@ -369,8 +526,8 @@
       internal-form)
     (println "Error -- Insufficient Keys Found")))
 
-(defn construct-contr-map-from-pdf-contents
-  "Given a string (PDF contents), construct a Contr map using finder functions IF all necessary Contr keys are found"
+(defn construct-contractor-map-from-pdf-contents
+  "Given a string (PDF contents), construct a contractor map using finder functions IF all necessary contractor keys are found"
   [string]
   (if (contractor-keys? string)
     (let [internal-form (hash-map :name (find-contr-name string)
@@ -388,63 +545,25 @@
   [string]
   (if (is-NLC? string)
     (construct-nlc-map-from-pdf-contents string)
-    (construct-contr-map-from-pdf-contents string)))
+    (construct-contractor-map-from-pdf-contents string)))
 
-(defn parse-pdf-to-if
-  "Given a filename (PDF), parse the PDF's contents and construct a map from those contents"
-  [filename]
-  (let [contents (read-pdf filename)
-        internal-form (construct-map-from-pdf-contents contents)]
-    internal-form))
+;; validation functions nlc invoices
 
-;; validate nlc invoices
+(defn unique-invoice-no?
+  "Given a collection, return true if current invoice number is not the same as the previously stored invoice number in data.txt"
+  [coll]
+  (not= (last-invoice-number-of-current-client coll) (:invoice-no coll)))
 
-(defn date-format?
-  [date]
-  (let [split-date (string/split date #"[/-]")
-        date-format (if (or (= (count (first split-date)) 2) (= (count (first split-date)) 1) )
-          "MM/DD/YYYY"
-          "YYYY-MM-DD")]
-    date-format))
-
-(defn get-year-given-date
-  [date]
-  (let [updated-date (if (= (date-format? date) "MM/DD/YYYY")
-                       date
-                       (string/replace date #"/" "-"))
-        split-date (string/split updated-date #"[/-]")
-        year (if (= (date-format? date) "MM/DD/YYYY")
-                (get split-date 2)
-                (get split-date 0))]
-    year))
-
-(defn get-month-given-date
-  [date]
-  (let [updated-date (if (= (date-format? date) "MM/DD/YYYY")
-                       date
-                       (string/replace date #"/" "-"))
-        split-date (string/split updated-date #"[/-]")
-        month (if (= (date-format? date) "MM/DD/YYYY")
-               (get split-date 0)
-               (get split-date 1))]
-    month))
-
-(defn get-day-given-date
-  [date]
-  (let [updated-date (if (= (date-format? date) "MM/DD/YYYY")
-                       date
-                       (string/replace date #"/" "-"))
-        split-date (string/split updated-date #"[/-]")
-        day (if (= (date-format? date) "MM/DD/YYYY")
-               (get split-date 1)
-               (get split-date 2))]
-    day))
+(defn greater-invoice-no?
+  "Given a collection, return true if current invoice number is greater than the previously stored invoice number in data.txt"
+  [coll]
+  (>  (Long/parseLong (apply str (filter #(Character/isDigit %) (:invoice-no coll)))) (Long/parseLong (apply str (filter #(Character/isDigit %) (last-invoice-number-of-current-client coll))))))
 
 (defn validate-date
   "Given a collection, perform validation on the value associated with :invoice-date"
   [coll]
   (let [given-date (:invoice-date coll)
-        updated-date (if (= (date-format? given-date) "MM/DD/YYYY")
+        updated-date (if (= (find-date-format given-date) "MM/DD/YYYY")
                        given-date
                        (:invoice-date (assoc coll :invoice-date (string/replace (:invoice-date coll) #"/" "-"))))
         month (get-month-given-date updated-date)
@@ -472,46 +591,6 @@
         validate-greater-than (greater-invoice-no? coll)
         validated-invoice-no (and validated-char-lim validated-no-space-test validate-no-alphabetic-suffix validate-unique validate-greater-than)]
     validated-invoice-no))
-
-(def billing-department-to-quickbooks-account
-  (hash-map :bd "Outside Services:General Consulting"
-            :r&d "Outside Services:R&D"
-            :engineering "Outside Services:Engineering"
-            :product "Outside Services:Engineering"
-            :marketing "Outside Services:Marketing"
-            :client-engagement "Outside Services:Client Services"
-            :finance "Outside Services:General Consulting"
-            :people&culture "Outside Services:General Consulting"
-            :corp-it "Outside Services:General Consulting"
-            :corporate "Outside Services:General Consulting"
-            :taxonomy-projects {:special-projects "Outside Services:Taxonomy-Other"
-                       :danish_denmark "NLCs:Taxonomy Development:Non-English (dev):Danish_Denmark:"
-                       :dutch_netherlands "NLCs:Taxonomy Development:Non-English (dev):Dutch_Netherlands:"
-                       :english_australia "NLCs:Taxonomy Development:English (dev):English_Australia:"
-                       :english_uk "NLCs:Taxonomy Development:English (dev):English_UK:"
-                       :english_us "NLCs:Taxonomy Development:English (dev):English_US:"
-                       :english_us_spanish_mexico "NLCs:Taxonomy Development:English (dev):English_US_Spanish_Mexico:"
-                       :finnish_finland "NLCs:Taxonomy Development:Non-English (dev):Finnish_Finland:"
-                       :flemish_belgium "NLCs:Taxonomy Development:Non-English (dev):Flemish_Belgium:"
-                       :french_canada "NLCs:Taxonomy Development:Non-English (dev):French_Canada:"
-                       :french_belgium "NLCs:Taxonomy Development:Non-English (dev):French_Belgium:"
-                       :french_france "NLCs:Taxonomy Development:Non-English (dev):French_France:"
-                       :german_germany "NLCs:Taxonomy Development:Non-English (dev):German_Germany:"
-                       :iol_italy "NLCs:Taxonomy Development:Non-English (dev):IOL_Italy (fka seat):"
-                       :italian_italy "NLCs:Taxonomy Development:Non-English (dev):Italian_Italy:"
-                       :norwegian_norway "NLCs:Taxonomy Development:Non-English (dev):Norwegian_Norway:"
-                       :paginas_budg_portuguese_portugal "NLCs:Taxonomy Development:Non-English (dev):Paginas_Budg_Portuguese_Portugal:"
-                       :portuguese_brazil "NLCs:Taxonomy Development:Non-English (dev):Portuguese_Brazil:"
-                       :spanish_argentina "NLCs:Taxonomy Development:Non-English (dev):Spanish_Argentina:"
-                       :spanish_colombia "NLCs:Taxonomy Development:Non-English (dev):Spanish_Colombia:"
-                       :spanish_latin_america "NLCs:Taxonomy Development:Non-English (dev):Spanish_Latin_America:"
-                       :spanish_mexico "NLCs:Taxonomy Development:Non-English (dev):Spanish_Mexico:"
-                       :spanish_spain "NLCs:Taxonomy Development:Non-English (dev):Spanish_Spain:"
-                       :swedish_sweden "NLCs:Taxonomy Development:Non-English (dev):Swedish_Sweden:"}))
-
-(def accounts-receivable
-  {:liturgicalpub "Accounts Receivable-USD:liturgicalpub-A/R"
-   :zipch "Accounts Receivable-CHF:zipch-A/R"})
 
 ;;SEM, Setup, Development
 (defn setup-fee?
@@ -691,10 +770,7 @@
         (println "Error -- No Transaction Type Found")))))
 
 
-;; Construct iif from contractor invoices
-
-(def transaction-types
-  ["BILL" "INVOICE"])
+;; IIF construction functions
 
 (defn construct-iif-headers-for-bill
   "Constructs the string that will be used as the headers in a properly formatted IIF file for Bills"
@@ -787,20 +863,7 @@
        (fee-type-and-client-to-quickbooks-item (:fee-type coll) (:name coll)) "\t\n"
        "ENDTRNS\n\n"))
 
-;; Master Functions -- CSV file gets parsed into a hashmap. That hashmap goes through validation
-;; checks. Then, an iif file is constructed using that hashmap.
-
-(defn csv-reader-to-internal-form
-  "Given a reader, parse a csv file's contents, remove white speace, remove empty rows, vectorize, mappize, and return the final form (a hashmap)"
-  [reader]
-  (let [contents (into [] (doall (csv/read-csv reader)))
-        empty-strings-removed (map remove-empty contents)
-        empty-rows-removed (remove empty? empty-strings-removed)
-        vectorized (into [] empty-rows-removed)
-        vector-of-rows (mapv row-to-map vectorized)
-        useful-rows (remove empty? vector-of-rows)
-        final-form (into {} (into [] useful-rows))]
-    final-form))
+;; Builder Functions -- functions in the steps of the Master Functions
 
 (defn pdf-filename-to-internal-form
   "Given a filename (PDF), parse a pdf file's contents, and construct a map from those contents"
@@ -825,6 +888,17 @@
       (println "Exception Error Writing")
       false)))
 
+(defn pdf-filename-to-iif-writer
+  "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
+  [pdf-filename writer]
+  (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
+    (if-let [validated-if (do (add-client-to-invoice-no-map internal-form) (validate-transaction internal-form))]
+      (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
+        (update-invoice-no-to-file internal-form)
+        (println "Writer failed"))
+      (println "Validation failed"))
+    (println "Parser Failed")))
+
 (defn internal-form-to-iif-writer-for-invoices
   "Given a writer and a form (hashmap), write using NLC format if the form has the appropriate key, write using Contr format otherwise."
   [writer form]
@@ -838,102 +912,8 @@
       (println "Exception Error Writing")
       false)))
 
-(defn pdf-filename-to-iif-writer
-  "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
-  [pdf-filename writer]
-  (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
-    (if-let [validated-if (do (add-client-to-invoice-no-map internal-form) (validate-transaction internal-form))]
-      (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
-        (update-invoice-no-to-file internal-form)
-        (println "Writer failed"))
-      (println "Validation failed"))
-    (println "Parser Failed")))
-
-(defn pdf-filename-to-iif-writer-for-invoices
-  "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
-  [pdf-filename writer]
-  (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
-    (if-let [validated-if (do (add-client-to-invoice-no-map internal-form) (validate-transaction internal-form))]
-      (if-let [constructed-iif (internal-form-to-iif-writer-for-invoices writer internal-form)]
-        (update-invoice-no-to-file internal-form)
-        (println "Writer failed"))
-      (println "Validation failed"))
-    (println "Parser Failed")))
-
-(defn pdf-file-to-iif-file
-  "Given a pdf-filename and iif-filename, open a writer and write to an iif file"
-  [pdf-filename iif-filename]
-  (with-open [w (io/writer iif-filename)]
-    (pdf-filename-to-iif-writer pdf-filename w)))
-
-
-(defn pdf-dir-to-iif-file
-  "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
-  [pdf-dirname iif-filename]
-  (with-open [w (io/writer iif-filename)]
-    (run! (fn [pdf-filename] (with-open [r (io/reader (str pdf-dirname "/" pdf-filename))]
-                               (pdf-filename-to-iif-writer (str pdf-dirname "/" pdf-filename) w)))
-          (list-filenames pdf-dirname))))
-
-(defn pdf-dir-to-iif-file-for-invoices
-  "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
-  [pdf-dirname iif-filename]
-  (with-open [w (io/writer iif-filename)]
-    (run! (fn [pdf-filename] (with-open [r (io/reader (str pdf-dirname "/" pdf-filename))]
-                               (pdf-filename-to-iif-writer-for-invoices (str pdf-dirname "/" pdf-filename) w)))
-          (list-filenames pdf-dirname))))
-
-(defn csv-reader-to-iif-writer
-  "Given a reader and a writer, convert from csv-reader to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
-  [reader writer]
-  (if-let [internal-form (csv-reader-to-internal-form reader)]
-      (if-let [validated-if (validate-transaction internal-form)]
-          (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
-              true
-              (println "Writer failed"))
-          (println "Validation failed"))
-      (println "Reader failed")))
-
-(defn csv-file-to-iif-file
-  "Given a csv-filename and iif-filename, open a writer and reader and convert from a csv-reader to an iif-writer"
-  [csv-filename iif-filename]
-  (with-open [r (io/reader csv-filename)
-              w (io/writer iif-filename)]
-    (csv-reader-to-iif-writer r w)))
-
-(defn csv-dir-to-iif-file
-  "Given a csv-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
-  [csv-dirname iif-filename]
-  (with-open [w (io/writer iif-filename)]
-    (run! (fn [csv-filename] (with-open [r (io/reader csv-filename)]
-                               (csv-reader-to-iif-writer r w)))
-          (list-filenames csv-dirname))))
-
-(defn update-begin-date
-  [form]
-  (if (= (date-format? (first (string/split (:begin-date form) #" "))) "MM/DD/YYYY")
-    (first (string/split (:begin-date form) #" "))
-    (:begin-date (assoc form :begin-date (string/replace (first (string/split (:begin-date form) #" ")) #"/" "-")))))
-
-(defn update-reported-date
-  [form]
-  (if (= (date-format? (first (string/split (:report-generated form) #" "))) "MM/DD/YYYY")
-    (first (string/split (:report-generated form) #" "))
-    (:report-generated (assoc form :report-generated (string/replace (first (string/split (:report-generated form) #" ")) #"/" "-")))))
-
-(defn update-end-date
-  [form]
-  (if (= (date-format? (first (string/split (:end-date form) #" "))) "MM/DD/YYYY")
-    (first (string/split (:end-date form) #" "))
-    (:end-date (assoc form :end-date (string/replace (first (string/split (:end-date form) #" ")) #"/" "-")))))
-
-(defn update-fee-type
-  [form]
-  (if (:one-time-fee-credit-set-up-fee form)
-    "Setup"
-    "MC"))
-
 (defn internal-form-to-invoice-form
+  "Given the 'standard' internal form, convert to a form suitable for invoices deemed invoice form"
   [form]
   (hash-map :total-due (:invoice-total form)
             :name (:pricing-plan form)
@@ -947,6 +927,7 @@
             :invoice-no (generate-invoice-number (get-year-given-date (update-begin-date form)) (get-month-given-date (update-begin-date form)) (:client-name form))))
 
 (defn invoice-to-internal-form
+  "Given a csv filename, convert its contents into a useful internal form (a hash-map)"
   [csv-filename]
   (let [contents (read-csv csv-filename)
         added-client-name (conj contents ["Client Name" (find-client-name csv-filename)])
@@ -970,6 +951,19 @@
       (println "Validation failed"))
     (println "Parser Failed")))
 
+
+
+;; Master Functions -- CSV file gets parsed into a hashmap. That hashmap goes through validation
+;; checks. Then, an iif file is constructed using that hashmap.
+
+(defn pdf-dir-to-iif-file
+  "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
+  [pdf-dirname iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (run! (fn [pdf-filename] (with-open [r (io/reader (str pdf-dirname "/" pdf-filename))]
+                               (pdf-filename-to-iif-writer (str pdf-dirname "/" pdf-filename) w)))
+          (list-filenames pdf-dirname))))
+
 (defn invoice-dir-to-iif-file
   "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
   [invoice-dirname iif-filename]
@@ -978,12 +972,86 @@
                                (invoice-filename-to-iif-writer (str invoice-dirname "/" invoice-filename) w)))
           (list-filenames invoice-dirname))))
 
+;;Currently bills are in PDF format and Invoices are in CSV format. The functions below allow the reverse to be converted to IIF if things change
+;;Be careful though! These functions aren't identical to the above master functions, as I stopped updating them when I knew I didn't actively need them
+
+;;Builder functions for the (currently) unused master functions
+
+(defn csv-reader-to-internal-form
+  "Given a reader, parse a csv file's contents, remove white speace, remove empty rows, vectorize, mappize, and return the final form (a hashmap)"
+  [reader]
+  (let [contents (into [] (doall (csv/read-csv reader)))
+        empty-strings-removed (map remove-empty contents)
+        empty-rows-removed (remove empty? empty-strings-removed)
+        vectorized (into [] empty-rows-removed)
+        vector-of-rows (mapv row-to-map vectorized)
+        useful-rows (remove empty? vector-of-rows)
+        final-form (into {} (into [] useful-rows))]
+    final-form))
+
+(defn csv-reader-to-iif-writer
+  "Given a reader and a writer, convert from csv-reader to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
+  [reader writer]
+  (if-let [internal-form (csv-reader-to-internal-form reader)]
+    (if-let [validated-if (validate-transaction internal-form)]
+      (if-let [constructed-iif (internal-form-to-iif-writer writer internal-form)]
+        true
+        (println "Writer failed"))
+      (println "Validation failed"))
+    (println "Reader failed")))
+
+(defn pdf-filename-to-iif-writer-for-invoices
+  "Given a filename (pdf) and a writer, convert from pdf-filename to internal form, run validation on internal form, write to iif from internal form. Return true if each step is completed, return errors otherwise"
+  [pdf-filename writer]
+  (if-let [internal-form (pdf-filename-to-internal-form pdf-filename)]
+    (if-let [validated-if (do (add-client-to-invoice-no-map internal-form) (validate-transaction internal-form))]
+      (if-let [constructed-iif (internal-form-to-iif-writer-for-invoices writer internal-form)]
+        (update-invoice-no-to-file internal-form)
+        (println "Writer failed"))
+      (println "Validation failed"))
+    (println "Parser Failed")))
+
+;;(currently) unused Master Functions
+
+(defn csv-dir-to-iif-file
+  "Given a csv-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
+  [csv-dirname iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (run! (fn [csv-filename] (with-open [r (io/reader csv-filename)]
+                               (csv-reader-to-iif-writer r w)))
+          (list-filenames csv-dirname))))
+
+(defn pdf-dir-to-iif-file-for-invoices
+  "Given a pdf-dirname (path) and an iif-filename, open a writer, read each file in the given directory's contents, and write to the given iif file"
+  [pdf-dirname iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (run! (fn [pdf-filename] (with-open [r (io/reader (str pdf-dirname "/" pdf-filename))]
+                               (pdf-filename-to-iif-writer-for-invoices (str pdf-dirname "/" pdf-filename) w)))
+          (list-filenames pdf-dirname))))
+
+;;Tester functions -- potentially useful functions for testing purposes
+
+(defn pdf-file-to-iif-file
+  "Given a pdf-filename and iif-filename, open a writer and write to an iif file"
+  [pdf-filename iif-filename]
+  (with-open [w (io/writer iif-filename)]
+    (pdf-filename-to-iif-writer pdf-filename w)))
+
+(defn csv-file-to-iif-file
+  "Given a csv-filename and iif-filename, open a writer and reader and convert from a csv-reader to an iif-writer"
+  [csv-filename iif-filename]
+  (with-open [r (io/reader csv-filename)
+              w (io/writer iif-filename)]
+    (csv-reader-to-iif-writer r w)))
+
+
 (comment
-  (def x (read-pdf "nlc-pdf-invoice-example.pdf"))
-  (new-find-nlc-name x)
+  (def pdf-contents (read-pdf "nlc-pdf-invoice-example.pdf"))
+  (def csv-contents (read-csv "nlc-invoice-example.csv"))
   (def pdf-dir "C:/Users/Steve/IdeaProjects/parse_csv/bills")
   (def csv-dir "C:/Users/Steve/IdeaProjects/parse_csv/invoices")
-  (def test-file (str csv-dir "/" (first (list-filenames "C:/Users/Steve/IdeaProjects/parse_csv/invoices"))))
+  (def csv-test-file (str csv-dir "/" (first (list-filenames "C:/Users/Steve/IdeaProjects/parse_csv/invoices"))))
+  (def pdf-test-file (str pdf-dir "/" (first (list-filenames "C:/Users/Steve/IdeaProjects/parse_csv/bills"))))
   )
 
 
